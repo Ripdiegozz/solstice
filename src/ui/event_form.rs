@@ -11,6 +11,44 @@ use crate::ui::clock::parse_color;
 use crate::ui::text_input::TextInputWidget;
 use crate::config::Config;
 
+/// Hit-test a modal: return the field index under (x, y), or None if outside
+pub fn hit_test_modal(x: u16, y: u16, area: Rect, modal: &ModalState) -> Option<usize> {
+    let width = (area.width as f32 * 0.6) as u16;
+    let height = (area.height as f32 * 0.7) as u16;
+    let modal_x = area.x + (area.width.saturating_sub(width)) / 2;
+    let modal_y = area.y + (area.height.saturating_sub(height)) / 2;
+    let modal_area = Rect::new(modal_x, modal_y, width, height);
+
+    if x < modal_area.x || x >= modal_area.x + modal_area.width
+        || y < modal_area.y || y >= modal_area.y + modal_area.height
+    {
+        return None;
+    }
+
+    let block = Block::default().borders(Borders::ALL);
+    let inner = block.inner(modal_area);
+
+    if inner.height < 4 || inner.width < 10 {
+        return None;
+    }
+
+    let field_height = 3u16;
+    let footer_height = 3u16;
+    let available = inner.height.saturating_sub(footer_height);
+
+    for (i, _field) in modal.fields.iter().enumerate() {
+        let field_y = inner.y + (i as u16 * field_height);
+        if field_y + field_height > inner.y + available {
+            break;
+        }
+        if y >= field_y && y < field_y + field_height {
+            return Some(i);
+        }
+    }
+
+    Some(modal.focused_field)
+}
+
 /// Render the modal overlay centered on the screen
 pub fn render_modal(modal: &ModalState, config: &Config, area: Rect, buf: &mut Buffer) {
     let accent = parse_color(&config.theme.accent);

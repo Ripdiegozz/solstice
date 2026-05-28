@@ -3,7 +3,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget},
+    widgets::{Paragraph, Widget},
 };
 
 /// A minimal text input widget with cursor and character editing
@@ -116,28 +116,14 @@ pub struct TextInputWidget<'a> {
 
 impl<'a> Widget for TextInputWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let border_style = if self.focused {
-            Style::default().fg(self.accent_color)
-        } else {
-            Style::default().fg(self.surface_color)
-        };
-
-        let block = Block::default()
-            .title(format!(" {} ", self.label))
-            .borders(Borders::ALL)
-            .border_style(border_style);
-
-        let inner = block.inner(area);
-        block.render(area, buf);
-
-        if inner.width == 0 || inner.height == 0 {
+        if area.width == 0 || area.height == 0 {
             return;
         }
 
         let text = &self.input.buffer;
-        let display_text = if text.len() > inner.width as usize {
-            // Truncate if too long
-            &text[..inner.width as usize]
+        let max_width = area.width as usize;
+        let display_text = if text.len() > max_width {
+            &text[..max_width]
         } else {
             text
         };
@@ -174,18 +160,38 @@ impl<'a> Widget for TextInputWidget<'a> {
 
             // Pad remaining width
             let used = before_cursor.len() + 1 + after_cursor.len();
-            if used < inner.width as usize {
-                spans.push(Span::raw(" ".repeat(inner.width as usize - used)));
+            if used < max_width {
+                spans.push(Span::raw(" ".repeat(max_width - used)));
             }
 
-            Paragraph::new(Line::from(spans)).render(inner, buf);
+            // Draw underline for the whole field area
+            for x in area.left()..area.right() {
+                if let Some(cell) = buf.cell_mut((x, area.bottom().saturating_sub(1))) {
+                    cell.set_symbol("─");
+                    cell.set_style(Style::default().fg(self.accent_color));
+                }
+            }
+
+            Paragraph::new(Line::from(spans)).render(area, buf);
         } else {
-            // Unfocused: just render the text
-            Paragraph::new(Line::from(Span::styled(
+            // Unfocused: just render the text with muted underline
+            let mut spans = vec![Span::styled(
                 display_text,
                 Style::default().fg(self.text_color),
-            )))
-            .render(inner, buf);
+            )];
+            if display_text.len() < max_width {
+                spans.push(Span::raw(" ".repeat(max_width - display_text.len())));
+            }
+
+            // Draw muted underline
+            for x in area.left()..area.right() {
+                if let Some(cell) = buf.cell_mut((x, area.bottom().saturating_sub(1))) {
+                    cell.set_symbol("─");
+                    cell.set_style(Style::default().fg(self.surface_color));
+                }
+            }
+
+            Paragraph::new(Line::from(spans)).render(area, buf);
         }
     }
 }
@@ -302,9 +308,9 @@ mod tests {
         let mut buf = Buffer::empty(area);
         widget.render(area, &mut buf);
 
-        // Verify the text is rendered
+        // Verify the text is rendered at row 0 (no block border)
         let content: String = (0..20)
-            .map(|x| buf.cell((x, 1)).map(|c| c.symbol()).unwrap_or(" ").to_string())
+            .map(|x| buf.cell((x, 0)).map(|c| c.symbol()).unwrap_or(" ").to_string())
             .collect();
         assert!(content.contains("hello"), "Expected 'hello' in rendered content: '{}'", content);
     }
@@ -326,7 +332,7 @@ mod tests {
         widget.render(area, &mut buf);
 
         let content: String = (0..20)
-            .map(|x| buf.cell((x, 1)).map(|c| c.symbol()).unwrap_or(" ").to_string())
+            .map(|x| buf.cell((x, 0)).map(|c| c.symbol()).unwrap_or(" ").to_string())
             .collect();
         assert!(content.contains("hello"), "Expected 'hello' in rendered content: '{}'", content);
     }

@@ -10,21 +10,44 @@ use crate::config::Config;
 use crate::events::Event;
 use crate::ui::clock::parse_color;
 
+/// Hit-test an event list: return the event index under y if any
+pub fn hit_test_event_list(y: u16, rect: Rect, event_count: usize) -> Option<usize> {
+    let inner = Block::default().borders(Borders::ALL).inner(rect);
+    if inner.height < 1 || event_count == 0 {
+        return None;
+    }
+    if y < inner.y || y >= inner.y + inner.height {
+        return None;
+    }
+    let idx = (y - inner.y) as usize;
+    if idx < event_count {
+        Some(idx)
+    } else {
+        None
+    }
+}
+
 /// Event list panel showing events for the selected day
 pub struct EventListWidget<'a> {
     pub events: &'a [Event],
     pub selected_date_label: String,
     pub config: &'a Config,
     pub selected_index: Option<usize>,
+    pub focused: bool,
 }
 
 impl<'a> EventListWidget<'a> {
     pub fn new(events: &'a [Event], selected_date_label: String, config: &'a Config) -> Self {
-        Self { events, selected_date_label, config, selected_index: None }
+        Self { events, selected_date_label, config, selected_index: None, focused: false }
     }
 
     pub fn with_selected_index(mut self, index: Option<usize>) -> Self {
         self.selected_index = index;
+        self
+    }
+
+    pub fn with_focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
         self
     }
 }
@@ -39,7 +62,7 @@ impl<'a> Widget for EventListWidget<'a> {
         let block = Block::default()
             .title(format!(" {} ", self.selected_date_label))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(surface));
+            .border_style(Style::default().fg(if self.focused { accent } else { surface }));
 
         if self.events.is_empty() {
             let empty_msg = Paragraph::new(vec![
@@ -87,6 +110,35 @@ impl<'a> Widget for EventListWidget<'a> {
 
         let list = List::new(items).block(block);
         list.render(area, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn test_hit_test_event_list_correct() {
+        let rect = Rect::new(10, 5, 20, 10);
+        // Inner: x=11..28, y=6..13
+        // idx = y - inner.y
+        assert_eq!(hit_test_event_list(6, rect, 5), Some(0));
+        assert_eq!(hit_test_event_list(7, rect, 5), Some(1));
+        assert_eq!(hit_test_event_list(8, rect, 5), Some(2));
+    }
+
+    #[test]
+    fn test_hit_test_event_list_empty_returns_none() {
+        let rect = Rect::new(10, 5, 20, 10);
+        assert_eq!(hit_test_event_list(6, rect, 0), None);
+    }
+
+    #[test]
+    fn test_hit_test_event_list_outside_returns_none() {
+        let rect = Rect::new(10, 5, 20, 10);
+        assert_eq!(hit_test_event_list(4, rect, 5), None); // above
+        assert_eq!(hit_test_event_list(15, rect, 5), None); // below
     }
 }
 

@@ -10,15 +10,44 @@ use crate::config::Config;
 use crate::events::Event;
 use crate::ui::clock::parse_color;
 
-/// Upcoming events panel — purely informational, no interaction
+/// Hit-test an upcoming events list: return the event index under y if any
+pub fn hit_test_upcoming(y: u16, rect: Rect, event_count: usize) -> Option<usize> {
+    let inner = Block::default().borders(Borders::ALL).inner(rect);
+    if inner.height < 1 || event_count == 0 {
+        return None;
+    }
+    if y < inner.y || y >= inner.y + inner.height {
+        return None;
+    }
+    let idx = (y - inner.y) as usize;
+    if idx < event_count {
+        Some(idx)
+    } else {
+        None
+    }
+}
+
+/// Upcoming events panel
 pub struct UpcomingEventsWidget<'a> {
     events: &'a [Event],
     config: &'a Config,
+    focused: bool,
+    selected_index: Option<usize>,
 }
 
 impl<'a> UpcomingEventsWidget<'a> {
     pub fn new(events: &'a [Event], config: &'a Config) -> Self {
-        Self { events, config }
+        Self { events, config, focused: false, selected_index: None }
+    }
+
+    pub fn with_focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
+        self
+    }
+
+    pub fn with_selected_index(mut self, index: Option<usize>) -> Self {
+        self.selected_index = index;
+        self
     }
 }
 
@@ -32,7 +61,7 @@ impl<'a> Widget for UpcomingEventsWidget<'a> {
         let block = Block::default()
             .title(" Upcoming ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(surface));
+            .border_style(Style::default().fg(if self.focused { accent } else { surface }));
 
         if self.events.is_empty() {
             let empty_msg = Paragraph::new(vec![
@@ -207,5 +236,27 @@ mod tests {
         // All events passed should render (truncation is data-layer responsibility)
         assert!(buffer_contains(&buf, 1, 45, 1, 12, "Event 0"), "First event rendered");
         assert!(buffer_contains(&buf, 1, 45, 1, 12, "Event 9"), "Last event rendered");
+    }
+
+    #[test]
+    fn test_hit_test_upcoming_correct() {
+        let rect = Rect::new(10, 5, 20, 10);
+        // Inner: x=11..28, y=6..13
+        assert_eq!(hit_test_upcoming(6, rect, 5), Some(0));
+        assert_eq!(hit_test_upcoming(7, rect, 5), Some(1));
+        assert_eq!(hit_test_upcoming(8, rect, 5), Some(2));
+    }
+
+    #[test]
+    fn test_hit_test_upcoming_empty_returns_none() {
+        let rect = Rect::new(10, 5, 20, 10);
+        assert_eq!(hit_test_upcoming(6, rect, 0), None);
+    }
+
+    #[test]
+    fn test_hit_test_upcoming_outside_returns_none() {
+        let rect = Rect::new(10, 5, 20, 10);
+        assert_eq!(hit_test_upcoming(4, rect, 5), None);
+        assert_eq!(hit_test_upcoming(15, rect, 5), None);
     }
 }

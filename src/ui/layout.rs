@@ -1,12 +1,12 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
     widgets::Paragraph,
 };
 
-use crate::app::{App, ViewMode};
+use crate::app::{App, FocusedPanel, ViewMode};
 use crate::calendar::grid::week_start_date;
 use crate::ui::calendar_view::CalendarView;
 use crate::ui::clock::{parse_color, ClockWidget};
@@ -14,6 +14,48 @@ use crate::ui::event_form;
 use crate::ui::event_list::EventListWidget;
 use crate::ui::upcoming_events::UpcomingEventsWidget;
 use crate::ui::weekly_view::WeeklyView;
+
+/// Computed layout rectangles for the main panels
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LayoutRects {
+    pub calendar: Rect,
+    pub event_list: Rect,
+    pub upcoming: Rect,
+}
+
+/// Compute layout rectangles from the full terminal area
+pub fn compute_layout(area: Rect) -> LayoutRects {
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),  // Top bar
+            Constraint::Min(10),    // Content
+            Constraint::Length(1),  // Bottom bar
+        ])
+        .split(area);
+
+    let content_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(65),
+            Constraint::Percentage(35),
+        ])
+        .split(main_chunks[1]);
+
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(60),
+            Constraint::Percentage(40),
+        ])
+        .split(content_chunks[1]);
+
+    LayoutRects {
+        calendar: content_chunks[0],
+        event_list: right_chunks[0],
+        upcoming: right_chunks[1],
+    }
+}
 
 /// Main UI layout:
 /// - Top bar: clock (time + date + timezone)
@@ -47,6 +89,7 @@ pub fn draw_ui(f: &mut Frame, app: &App) {
         .split(main_chunks[1]);
 
     // Content area: conditional calendar view
+    let calendar_focused = app.focused_panel == FocusedPanel::Calendar;
     match app.view_mode {
         ViewMode::Monthly => {
             let calendar = CalendarView::new(
@@ -57,7 +100,7 @@ pub fn draw_ui(f: &mut Frame, app: &App) {
                 &app.holidays,
                 &app.event_dates,
                 &app.config,
-            );
+            ).with_focused(calendar_focused);
             f.render_widget(calendar, content_chunks[0]);
         }
         ViewMode::Weekly => {
@@ -69,7 +112,7 @@ pub fn draw_ui(f: &mut Frame, app: &App) {
                 &app.holidays,
                 &app.week_events,
                 &app.config,
-            );
+            ).with_focused(calendar_focused);
             f.render_widget(weekly, content_chunks[0]);
         }
     }
@@ -89,23 +132,51 @@ pub fn draw_ui(f: &mut Frame, app: &App) {
         &app.selected_day_events,
         date_label,
         &app.config,
-    ).with_selected_index(app.selected_event_index);
+    )
+    .with_selected_index(app.selected_event_index)
+    .with_focused(app.focused_panel == FocusedPanel::EventList);
     f.render_widget(event_list, right_chunks[0]);
 
-    // Upcoming events (purely informational)
-    let upcoming = UpcomingEventsWidget::new(&app.upcoming_events, &app.config);
+    // Upcoming events
+    let upcoming = UpcomingEventsWidget::new(&app.upcoming_events, &app.config)
+        .with_focused(app.focused_panel == FocusedPanel::Upcoming)
+        .with_selected_index(app.selected_upcoming_index);
     f.render_widget(upcoming, right_chunks[1]);
 
-    // Bottom bar: keybindings
+    // Bottom bar: split into status (left) + keybindings (right)
+    let bottom_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(40),  // Status message
+            Constraint::Percentage(60),  // Keybindings
+        ])
+        .split(main_chunks[2]);
+
+    // Status message (left side)
+    if let Some(ref msg) = app.status_message {
+        let status_line = Line::from(Span::styled(
+            format!(" {} ", msg),
+            Style::default().fg(parse_color(&app.config.theme.accent)),
+        ));
+        f.render_widget(Paragraph::new(status_line), bottom_chunks[0]);
+    }
+
+    // Keybindings (right side)
     let nav_label = match app.view_mode {
         ViewMode::Monthly => " month ",
         ViewMode::Weekly => " week ",
     };
     let keybindings = Line::from(vec![
+        Span::styled(" 1 ", Style::default().fg(surface).bg(parse_color(&app.config.theme.accent))),
+        Span::styled(" cal ", Style::default().fg(muted)),
+        Span::styled(" 2 ", Style::default().fg(surface).bg(parse_color(&app.config.theme.accent))),
+        Span::styled(" events ", Style::default().fg(muted)),
+        Span::styled(" 3 ", Style::default().fg(surface).bg(parse_color(&app.config.theme.accent))),
+        Span::styled(" upcoming ", Style::default().fg(muted)),
         Span::styled(" ← → ", Style::default().fg(surface).bg(parse_color(&app.config.theme.accent))),
         Span::styled(nav_label, Style::default().fg(muted)),
         Span::styled(" ↑ ↓ ", Style::default().fg(surface).bg(parse_color(&app.config.theme.accent))),
-        Span::styled(" day ", Style::default().fg(muted)),
+        Span::styled(" nav ", Style::default().fg(muted)),
         Span::styled(" t ", Style::default().fg(surface).bg(parse_color(&app.config.theme.accent))),
         Span::styled(" today ", Style::default().fg(muted)),
         Span::styled(" n ", Style::default().fg(surface).bg(parse_color(&app.config.theme.accent))),
@@ -113,7 +184,7 @@ pub fn draw_ui(f: &mut Frame, app: &App) {
         Span::styled(" e ", Style::default().fg(surface).bg(parse_color(&app.config.theme.accent))),
         Span::styled(" edit ", Style::default().fg(muted)),
         Span::styled(" d ", Style::default().fg(surface).bg(parse_color(&app.config.theme.accent))),
-        Span::styled(" delete ", Style::default().fg(muted)),
+        Span::styled(" del ", Style::default().fg(muted)),
         Span::styled(" v ", Style::default().fg(surface).bg(parse_color(&app.config.theme.accent))),
         Span::styled(" view ", Style::default().fg(muted)),
         Span::styled(" q ", Style::default().fg(surface).bg(parse_color(&app.config.theme.accent))),
@@ -121,18 +192,8 @@ pub fn draw_ui(f: &mut Frame, app: &App) {
     ]);
     f.render_widget(
         Paragraph::new(keybindings),
-        main_chunks[2],
+        bottom_chunks[1],
     );
-
-    // Status message (if any)
-    if let Some(ref msg) = app.status_message {
-        let status_area = main_chunks[2];
-        let status_line = Line::from(Span::styled(
-            format!(" {} ", msg),
-            Style::default().fg(parse_color(&app.config.theme.accent)),
-        ));
-        f.render_widget(Paragraph::new(status_line), status_area);
-    }
 
     // Modal overlay
     if let Some(ref modal) = app.modal {

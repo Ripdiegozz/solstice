@@ -1,10 +1,11 @@
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    cursor::Show,
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 use solstice::app::App;
 use solstice::config::Config;
 use solstice::events::EventStore;
@@ -12,6 +13,25 @@ use solstice::gcal::GCalSync;
 use solstice::ui;
 use std::io;
 use std::time::Duration;
+
+/// RAII guard that runs a cleanup closure on drop.
+struct TerminalGuard<F: FnOnce()> {
+    cleanup: Option<F>,
+}
+
+impl<F: FnOnce()> TerminalGuard<F> {
+    fn new(cleanup: F) -> Self {
+        Self { cleanup: Some(cleanup) }
+    }
+}
+
+impl<F: FnOnce()> Drop for TerminalGuard<F> {
+    fn drop(&mut self) {
+        if let Some(cleanup) = self.cleanup.take() {
+            cleanup();
+        }
+    }
+}
 
 fn main() -> Result<()> {
     // Handle CLI subcommands
@@ -26,20 +46,32 @@ fn main() -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+
+    // Panic hook to ensure terminal is restored on panic
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
+        original_hook(info);
+    }));
 
     // Create app state
     let mut app = App::new(config)?;
 
+    // RAII guard for clean exit
+    let guard = TerminalGuard::new(|| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
+    });
+
     // Main event loop
     let result = run_app(&mut terminal, &mut app);
 
-    // Restore terminal
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    // Explicitly drop the guard to run cleanup
+    drop(guard);
 
     if let Err(e) = result {
         eprintln!("Error: {}", e);
@@ -62,40 +94,34 @@ fn run_app(
         })?;
 
         // Handle events with a timeout for smooth clock updates
-        if event::poll(Duration::from_millis(250))? && let Event::Key(key) = event::read()? && key.kind == KeyEventKind::Press {
-            // Modal-aware key dispatch
-            if app.modal.is_some() {
-                app.handle_modal_key(key);
-            } else if app.confirm_delete {
-                app.handle_delete_confirm(key);
-            } else {
-                // Normal navigation mode
-                match key.code {
-                    KeyCode::Char('q') => app.quit(),
-                    KeyCode::Esc => {
-                        app.status_message = None;
-                    }
-                    KeyCode::Char('v') => app.toggle_view(),
-                    KeyCode::Char('h') | KeyCode::Left => app.navigate_back(),
-                    KeyCode::Char('l') | KeyCode::Right => app.navigate_forward(),
-                    KeyCode::Char('k') | KeyCode::Up => app.prev_day(),
-                    KeyCode::Char('j') | KeyCode::Down => app.next_day(),
-                    KeyCode::Char('t') => app.go_to_today(),
-                    KeyCode::Char('n') => app.open_create_modal(),
-                    KeyCode::Char('e') => {
-                        app.open_edit_modal();
-                    }
-                    KeyCode::Char('d') => {
-                        if app.selected_event_index.is_some() {
-                            app.confirm_delete = true;
-                        } else {
-                            app.status_message = Some("No event selected".to_string());
+        if event::poll(Duration::from_millis(250))? {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    // Modal-aware key dispatch
+                    if app.modal.is_some() {
+                        app.handle_modal_key(key);
+                    } else if app.confirm_delete {
+                        app.handle_delete_confirm(key);
+                    } else {
+                        // Numbered panel switching (absorbed when modal/confirm open)
+                        match key.code {
+                            KeyCode::Char('1') => app.focus_panel(1),
+                            KeyCode::Char('2') => app.focus_panel(2),
+                            KeyCode::Char('3') => app.focus_panel(3),
+                            _ => app.handle_normal_key(key),
                         }
                     }
-                    KeyCode::Tab => app.select_next_event(),
-                    KeyCode::BackTab => app.select_prev_event(),
-                    _ => {}
                 }
+                Event::Mouse(mouse) => {
+                    if app.modal.is_some() || app.confirm_delete {
+                        app.handle_mouse(mouse, None);
+                    } else {
+                        let size = terminal.size()?;
+                        let rects = ui::compute_layout(Rect::new(0, 0, size.width, size.height));
+                        app.handle_mouse(mouse, Some(&rects));
+                    }
+                }
+                _ => {}
             }
         }
 

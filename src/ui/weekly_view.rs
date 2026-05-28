@@ -7,9 +7,31 @@ use ratatui::{
 };
 use std::collections::HashMap;
 
+use crate::app::App;
 use crate::config::Config;
 use crate::events::Event;
 use crate::ui::clock::parse_color;
+
+/// Hit-test a weekly calendar view: return the date under (x, y) if any
+pub fn hit_test_weekly(x: u16, y: u16, rect: Rect, app: &App) -> Option<NaiveDate> {
+    let inner = Block::default()
+        .borders(Borders::ALL)
+        .inner(rect);
+
+    if inner.height < 2 || inner.width < 25 {
+        return None;
+    }
+    if x < inner.x || x >= inner.x + inner.width || y < inner.y || y >= inner.y + inner.height {
+        return None;
+    }
+
+    let row = (y as i64) - (inner.y as i64 + 1);
+    if !(0..7).contains(&row) {
+        return None;
+    }
+    let ws = crate::calendar::grid::week_start_date(app.selected_date, app.config.first_day_of_week);
+    Some(ws + chrono::Duration::days(row))
+}
 
 /// Weekly calendar view widget showing 7 days with event summaries
 pub struct WeeklyView<'a> {
@@ -19,6 +41,7 @@ pub struct WeeklyView<'a> {
     pub holidays: &'a HashMap<NaiveDate, String>,
     pub week_events: &'a HashMap<NaiveDate, Vec<Event>>,
     pub config: &'a Config,
+    pub focused: bool,
 }
 
 impl<'a> WeeklyView<'a> {
@@ -30,7 +53,12 @@ impl<'a> WeeklyView<'a> {
         week_events: &'a HashMap<NaiveDate, Vec<Event>>,
         config: &'a Config,
     ) -> Self {
-        Self { week_start, selected_date, today, holidays, week_events, config }
+        Self { week_start, selected_date, today, holidays, week_events, config, focused: false }
+    }
+
+    pub fn with_focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
+        self
     }
 }
 
@@ -47,7 +75,7 @@ impl<'a> Widget for WeeklyView<'a> {
         let block = Block::default()
             .title(format!(" Week of {} ", self.week_start.format("%b %-d")))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(surface));
+            .border_style(Style::default().fg(if self.focused { accent } else { surface }));
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -288,5 +316,48 @@ mod tests {
         // First day row (inner.y+1 = 2) should be "Mon 15"
         assert!(buffer_contains(&buf, 1, 7, 2, 3, "Mon"), "First row should be Mon");
         assert!(buffer_contains(&buf, 1, 7, 2, 3, "15"), "First row should show date 15");
+    }
+
+    #[test]
+    fn test_hit_test_weekly_correct() {
+        use crate::app::{App, FocusedPanel};
+        use crate::config::Config;
+
+        let mut app = App::new(Config::default()).unwrap();
+        app.view_year = 2026;
+        app.view_month = 6;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        app.today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        app.view_mode = crate::app::ViewMode::Weekly;
+        app.focused_panel = FocusedPanel::Calendar;
+
+        let rect = Rect::new(0, 0, 40, 10);
+        // Inner: x=1..38, y=1..8
+        // Day rows: y=2..8 (inner.y + 1 + i)
+        // Default config: Sunday start. week_start_date(June 15, Sunday) = June 14.
+        // Row 0: June 14 (y=2), Row 1: June 15 (y=3), Row 3: June 17 (y=5)
+        let date = hit_test_weekly(5, 3, rect, &app);
+        assert_eq!(date, Some(NaiveDate::from_ymd_opt(2026, 6, 15).unwrap()));
+
+        let date = hit_test_weekly(5, 5, rect, &app);
+        assert_eq!(date, Some(NaiveDate::from_ymd_opt(2026, 6, 17).unwrap()));
+    }
+
+    #[test]
+    fn test_hit_test_weekly_outside_returns_none() {
+        use crate::app::{App, FocusedPanel};
+        use crate::config::Config;
+
+        let mut app = App::new(Config::default()).unwrap();
+        app.view_year = 2026;
+        app.view_month = 6;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        app.today = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        app.view_mode = crate::app::ViewMode::Weekly;
+        app.focused_panel = FocusedPanel::Calendar;
+
+        let rect = Rect::new(0, 0, 40, 10);
+        assert_eq!(hit_test_weekly(0, 0, rect, &app), None);
+        assert_eq!(hit_test_weekly(100, 100, rect, &app), None);
     }
 }

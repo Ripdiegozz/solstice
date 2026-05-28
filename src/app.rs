@@ -24,6 +24,15 @@ pub enum ViewMode {
     Weekly,
 }
 
+/// Which panel has keyboard focus
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum FocusedPanel {
+    #[default]
+    Calendar,
+    EventList,
+    Upcoming,
+}
+
 /// A single form field in the modal
 #[derive(Debug, Clone)]
 pub struct FormField {
@@ -226,6 +235,10 @@ pub struct App {
     pub confirm_delete: bool,
     pub status_message: Option<String>,
 
+    // Focus system
+    pub focused_panel: FocusedPanel,
+    pub selected_upcoming_index: Option<usize>,
+
     // Internal
     holiday_provider: Box<dyn HolidayProvider>,
     event_store: Option<EventStore>,
@@ -280,6 +293,8 @@ impl App {
             selected_event_index: None,
             confirm_delete: false,
             status_message: None,
+            focused_panel: FocusedPanel::Calendar,
+            selected_upcoming_index: None,
             holiday_provider,
             event_store,
         })
@@ -628,11 +643,8 @@ impl App {
     pub fn handle_modal_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
         use crossterm::event::{KeyCode, KeyModifiers};
 
-        // Check if we need to save (Enter on non-recurrence field)
-        // This needs to be checked before we borrow modal mutably
-        let should_save = key.code == KeyCode::Enter && matches!(&self.modal, Some(m) if m.focused_field != 5);
-
-        if should_save {
+        // Enter always saves the modal
+        if key.code == KeyCode::Enter {
             self.save_modal();
             return true;
         }
@@ -656,11 +668,6 @@ impl App {
                 } else {
                     modal.focus_next();
                 }
-                return true;
-            }
-            KeyCode::Enter => {
-                // If on recurrence field, cycle it
-                modal.cycle_recurrence();
                 return true;
             }
             KeyCode::Backspace => {
@@ -701,6 +708,218 @@ impl App {
         }
 
         true // Modal absorbs all keys
+    }
+
+    /// Switch focus to a panel by number (1=Calendar, 2=EventList, 3=Upcoming)
+    pub fn focus_panel(&mut self, n: u8) {
+        self.focused_panel = match n {
+            1 => FocusedPanel::Calendar,
+            2 => FocusedPanel::EventList,
+            3 => FocusedPanel::Upcoming,
+            _ => self.focused_panel,
+        };
+    }
+
+    /// Cycle focus to the next panel (Tab behavior)
+    pub fn cycle_focus(&mut self) {
+        self.focused_panel = match self.focused_panel {
+            FocusedPanel::Calendar => FocusedPanel::EventList,
+            FocusedPanel::EventList => FocusedPanel::Upcoming,
+            FocusedPanel::Upcoming => FocusedPanel::Calendar,
+        };
+    }
+
+    /// Navigate to the previous upcoming event
+    pub fn prev_upcoming(&mut self) {
+        if self.upcoming_events.is_empty() {
+            self.selected_upcoming_index = None;
+            return;
+        }
+        self.selected_upcoming_index = Some(match self.selected_upcoming_index {
+            Some(0) => 0,
+            Some(i) => i - 1,
+            None => 0,
+        });
+    }
+
+    /// Navigate to the next upcoming event
+    pub fn next_upcoming(&mut self) {
+        if self.upcoming_events.is_empty() {
+            self.selected_upcoming_index = None;
+            return;
+        }
+        self.selected_upcoming_index = Some(match self.selected_upcoming_index {
+            Some(i) if i + 1 < self.upcoming_events.len() => i + 1,
+            Some(i) => i,
+            None => 0,
+        });
+    }
+
+    /// Jump to the date of the selected upcoming event
+    pub fn jump_to_upcoming_date(&mut self) {
+        if let Some(idx) = self.selected_upcoming_index {
+            if let Some(event) = self.upcoming_events.get(idx) {
+                self.selected_date = event.date;
+                self.view_year = event.date.year();
+                self.view_month = event.date.month();
+                self.refresh_data();
+            }
+        }
+    }
+
+    /// Dispatch normal-mode keys based on the focused panel
+    pub fn handle_normal_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Char('q') => self.quit(),
+            KeyCode::Esc => {
+                self.status_message = None;
+            }
+            KeyCode::Char('v') => self.toggle_view(),
+            KeyCode::Char('t') => self.go_to_today(),
+            KeyCode::Char('n') => self.open_create_modal(),
+            KeyCode::Char('e') => {
+                self.open_edit_modal();
+            }
+            KeyCode::Char('d') => {
+                if self.selected_event_index.is_some() {
+                    self.confirm_delete = true;
+                } else {
+                    self.status_message = Some("No event selected".to_string());
+                }
+            }
+            KeyCode::Char('1') => self.focus_panel(1),
+            KeyCode::Char('2') => self.focus_panel(2),
+            KeyCode::Char('3') => self.focus_panel(3),
+            KeyCode::Tab => self.cycle_focus(),
+            KeyCode::BackTab => self.cycle_focus(),
+            _ => {
+                match self.focused_panel {
+                    FocusedPanel::Calendar => {
+                        match key.code {
+                            KeyCode::Char('h') | KeyCode::Left => self.navigate_back(),
+                            KeyCode::Char('l') | KeyCode::Right => self.navigate_forward(),
+                            KeyCode::Char('k') | KeyCode::Up => self.prev_day(),
+                            KeyCode::Char('j') | KeyCode::Down => self.next_day(),
+                            _ => {}
+                        }
+                    }
+                    FocusedPanel::EventList => {
+                        match key.code {
+                            KeyCode::Char('k') | KeyCode::Up => self.select_prev_event(),
+                            KeyCode::Char('j') | KeyCode::Down => self.select_next_event(),
+                            _ => {}
+                        }
+                    }
+                    FocusedPanel::Upcoming => {
+                        match key.code {
+                            KeyCode::Char('k') | KeyCode::Up => self.prev_upcoming(),
+                            KeyCode::Char('j') | KeyCode::Down => self.next_upcoming(),
+                            KeyCode::Char('h') | KeyCode::Left => self.jump_to_upcoming_date(),
+                            KeyCode::Char('l') | KeyCode::Right => self.jump_to_upcoming_date(),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handle a mouse event, optionally with layout rectangles for hit-testing
+    pub fn handle_mouse(
+        &mut self,
+        mouse: crossterm::event::MouseEvent,
+        rects: Option<&crate::ui::LayoutRects>,
+    ) {
+        use crossterm::event::{MouseButton, MouseEventKind};
+
+        // When modal or confirm dialog is open, close on any left click
+        if self.modal.is_some() || self.confirm_delete {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                self.modal = None;
+                self.confirm_delete = false;
+            }
+            return;
+        }
+
+        let Some(rects) = rects else { return };
+        let pos = ratatui::layout::Position { x: mouse.column, y: mouse.row };
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Calendar hit-test
+                if rects.calendar.contains(pos) {
+                    self.focused_panel = FocusedPanel::Calendar;
+                    if let Some(date) = crate::ui::calendar_view::hit_test_monthly(
+                        mouse.column,
+                        mouse.row,
+                        rects.calendar,
+                        self,
+                    ) {
+                        self.selected_date = date;
+                        self.view_year = date.year();
+                        self.view_month = date.month();
+                        self.refresh_data();
+                    }
+                    return;
+                }
+
+                // Event list hit-test
+                if rects.event_list.contains(pos) {
+                    self.focused_panel = FocusedPanel::EventList;
+                    let count = self.selected_day_events.len();
+                    if let Some(idx) = crate::ui::event_list::hit_test_event_list(
+                        mouse.row,
+                        rects.event_list,
+                        count,
+                    ) {
+                        self.selected_event_index = Some(idx);
+                    } else {
+                        self.selected_event_index = None;
+                    }
+                    return;
+                }
+
+                // Upcoming hit-test
+                if rects.upcoming.contains(pos) {
+                    self.focused_panel = FocusedPanel::Upcoming;
+                    let count = self.upcoming_events.len();
+                    if let Some(idx) = crate::ui::upcoming_events::hit_test_upcoming(
+                        mouse.row,
+                        rects.upcoming,
+                        count,
+                    ) {
+                        self.selected_upcoming_index = Some(idx);
+                        if let Some(event) = self.upcoming_events.get(idx) {
+                            self.selected_date = event.date;
+                            self.view_year = event.date.year();
+                            self.view_month = event.date.month();
+                            self.refresh_data();
+                        }
+                    }
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if rects.calendar.contains(pos) {
+                    self.prev_month();
+                } else if rects.event_list.contains(pos) {
+                    self.select_prev_event();
+                } else if rects.upcoming.contains(pos) {
+                    self.prev_upcoming();
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if rects.calendar.contains(pos) {
+                    self.next_month();
+                } else if rects.event_list.contains(pos) {
+                    self.select_next_event();
+                } else if rects.upcoming.contains(pos) {
+                    self.next_upcoming();
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Quit the application
@@ -1002,6 +1221,178 @@ mod tests {
         }
     }
 
+    // Task 5.1: FocusedPanel default is Calendar
+    #[test]
+    fn test_focused_panel_default_is_calendar() {
+        let app = make_test_app();
+        assert_eq!(app.focused_panel, FocusedPanel::Calendar);
+    }
+
+    // Task 5.2: focus_panel(1/2/3)
+    #[test]
+    fn test_focus_panel_numbers() {
+        let mut app = make_test_app();
+        app.focus_panel(2);
+        assert_eq!(app.focused_panel, FocusedPanel::EventList);
+        app.focus_panel(3);
+        assert_eq!(app.focused_panel, FocusedPanel::Upcoming);
+        app.focus_panel(1);
+        assert_eq!(app.focused_panel, FocusedPanel::Calendar);
+    }
+
+    #[test]
+    fn test_focus_panel_invalid_number_ignores() {
+        let mut app = make_test_app();
+        app.focus_panel(2);
+        app.focus_panel(9);
+        assert_eq!(app.focused_panel, FocusedPanel::EventList);
+    }
+
+    // Task 5.3: handle_normal_key dispatches per panel
+    #[test]
+    fn test_handle_normal_key_calendar_arrows() {
+        let mut app = make_test_app();
+        app.focused_panel = FocusedPanel::Calendar;
+        let original_month = app.view_month;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let right = KeyEvent::new(KeyCode::Right, KeyModifiers::NONE);
+        app.handle_normal_key(right);
+        assert_eq!(app.view_month, original_month + 1);
+
+        let left = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
+        app.handle_normal_key(left);
+        assert_eq!(app.view_month, original_month);
+    }
+
+    #[test]
+    fn test_handle_normal_key_event_list_arrows() {
+        let mut app = make_test_app();
+        app.selected_day_events = vec![
+            make_test_event(1, "A"),
+            make_test_event(2, "B"),
+            make_test_event(3, "C"),
+        ];
+        app.focused_panel = FocusedPanel::EventList;
+        app.selected_event_index = None;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        app.handle_normal_key(down);
+        assert_eq!(app.selected_event_index, Some(0));
+
+        app.handle_normal_key(down);
+        assert_eq!(app.selected_event_index, Some(1));
+    }
+
+    #[test]
+    fn test_handle_normal_key_upcoming_arrows() {
+        let mut app = make_test_app();
+        app.upcoming_events = vec![
+            make_test_event(1, "A"),
+            make_test_event(2, "B"),
+        ];
+        app.focused_panel = FocusedPanel::Upcoming;
+        app.selected_upcoming_index = None;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let down = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+        app.handle_normal_key(down);
+        assert_eq!(app.selected_upcoming_index, Some(0));
+
+        app.handle_normal_key(down);
+        assert_eq!(app.selected_upcoming_index, Some(1));
+    }
+
+    #[test]
+    fn test_handle_normal_key_numbered_keys_change_focus() {
+        let mut app = make_test_app();
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert_eq!(app.focused_panel, FocusedPanel::EventList);
+
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+        assert_eq!(app.focused_panel, FocusedPanel::Upcoming);
+
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
+        assert_eq!(app.focused_panel, FocusedPanel::Calendar);
+    }
+
+    // Task 5.8: Integration test — click calendar day updates selected_date
+    #[test]
+    fn test_click_calendar_day_updates_selected_date() {
+        let mut app = make_test_app();
+        app.view_year = 2026;
+        app.view_month = 6;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+
+        let rects = crate::ui::LayoutRects {
+            calendar: ratatui::layout::Rect::new(0, 0, 40, 20),
+            event_list: ratatui::layout::Rect::new(40, 0, 20, 10),
+            upcoming: ratatui::layout::Rect::new(40, 10, 20, 10),
+        };
+
+        // Default config: Sunday start. June 1 2026 is Monday → offset 1.
+        // Inner area: x=1..38, y=1..18
+        // Header at y=1, weeks start at y=3
+        // Day 1 (June 1): col=1, row=0 → x=6, y=3
+        // Day 15: col=1, row=2 → x=6, y=5
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 6,
+            row: 5,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse, Some(&rects));
+        assert_eq!(app.selected_date, NaiveDate::from_ymd_opt(2026, 6, 15).unwrap());
+        assert_eq!(app.focused_panel, FocusedPanel::Calendar);
+    }
+
+    // Task 5.9: Integration test — click event updates selected_event_index
+    #[test]
+    fn test_click_event_updates_selected_event_index() {
+        let mut app = make_test_app();
+        app.selected_day_events = vec![
+            make_test_event(1, "A"),
+            make_test_event(2, "B"),
+            make_test_event(3, "C"),
+        ];
+
+        let rects = crate::ui::LayoutRects {
+            calendar: ratatui::layout::Rect::new(0, 0, 40, 20),
+            event_list: ratatui::layout::Rect::new(40, 0, 20, 10),
+            upcoming: ratatui::layout::Rect::new(40, 10, 20, 10),
+        };
+
+        // Inner area of event_list: x=41..58, y=1..8
+        // List items start at y=1 (inner.y)
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 45,
+            row: 2,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse, Some(&rects));
+        assert_eq!(app.selected_event_index, Some(1));
+        assert_eq!(app.focused_panel, FocusedPanel::EventList);
+    }
+
+    // Task 5.10: Integration test — numbered key changes focused_panel
+    #[test]
+    fn test_numbered_key_changes_focused_panel() {
+        let mut app = make_test_app();
+        assert_eq!(app.focused_panel, FocusedPanel::Calendar);
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let key = KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE);
+        // Simulate what main.rs does
+        app.focus_panel(2);
+        assert_eq!(app.focused_panel, FocusedPanel::EventList);
+    }
+
     fn make_test_app() -> App {
         App {
             config: Config::default(),
@@ -1022,6 +1413,8 @@ mod tests {
             selected_event_index: None,
             confirm_delete: false,
             status_message: None,
+            focused_panel: FocusedPanel::Calendar,
+            selected_upcoming_index: None,
             holiday_provider: Box::new(crate::calendar::holidays::LocalFileProvider::new()),
             event_store: None,
         }
@@ -1048,6 +1441,8 @@ mod tests {
             selected_event_index: None,
             confirm_delete: false,
             status_message: None,
+            focused_panel: FocusedPanel::Calendar,
+            selected_upcoming_index: None,
             holiday_provider: Box::new(crate::calendar::holidays::LocalFileProvider::new()),
             event_store: Some(store),
         }
@@ -1354,5 +1749,87 @@ mod tests {
         assert!(!app.confirm_delete, "confirm_delete should be false after handling");
         assert_eq!(app.selected_day_events.len(), 1, "Event should NOT be deleted");
         assert_eq!(app.status_message, Some("Delete cancelled".to_string()));
+    }
+
+    // Task: Mouse wheel scroll in calendar navigates months
+    #[test]
+    fn test_mouse_wheel_calendar_navigates_months() {
+        let mut app = make_test_app();
+        app.view_year = 2026;
+        app.view_month = 6;
+
+        let rects = crate::ui::LayoutRects {
+            calendar: ratatui::layout::Rect::new(0, 0, 40, 20),
+            event_list: ratatui::layout::Rect::new(40, 0, 20, 10),
+            upcoming: ratatui::layout::Rect::new(40, 10, 20, 10),
+        };
+
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        let scroll_down = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 10,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(scroll_down, Some(&rects));
+        assert_eq!(app.view_month, 7, "Scroll down should go to next month");
+
+        let scroll_up = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 10,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(scroll_up, Some(&rects));
+        assert_eq!(app.view_month, 6, "Scroll up should go to previous month");
+    }
+
+    // Task: Click outside modal dismisses it
+    #[test]
+    fn test_click_outside_modal_dismisses() {
+        let mut app = make_test_app();
+        app.open_create_modal();
+        assert!(app.modal.is_some(), "Modal should be open");
+
+        let rects = crate::ui::LayoutRects {
+            calendar: ratatui::layout::Rect::new(0, 0, 40, 20),
+            event_list: ratatui::layout::Rect::new(40, 0, 20, 10),
+            upcoming: ratatui::layout::Rect::new(40, 10, 20, 10),
+        };
+
+        // Click outside modal (top-left corner of screen)
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let click_outside = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(click_outside, Some(&rects));
+        assert!(app.modal.is_none(), "Modal should close on click outside");
+    }
+
+    // Task: Hover (mouse move) does NOT change focus
+    #[test]
+    fn test_hover_does_not_change_focus() {
+        let mut app = make_test_app();
+        app.focused_panel = FocusedPanel::Calendar;
+
+        let rects = crate::ui::LayoutRects {
+            calendar: ratatui::layout::Rect::new(0, 0, 40, 20),
+            event_list: ratatui::layout::Rect::new(40, 0, 20, 10),
+            upcoming: ratatui::layout::Rect::new(40, 10, 20, 10),
+        };
+
+        // Move mouse over EventList panel without clicking
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        let hover = MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 50,
+            row: 5,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(hover, Some(&rects));
+        assert_eq!(app.focused_panel, FocusedPanel::Calendar, "Hover should NOT change focus");
     }
 }

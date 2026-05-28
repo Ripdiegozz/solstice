@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -7,9 +7,48 @@ use ratatui::{
 };
 use std::collections::{HashMap, HashSet};
 
+use crate::app::App;
 use crate::calendar::grid::CalendarGrid;
 use crate::config::Config;
 use crate::ui::clock::parse_color;
+
+/// Hit-test a monthly calendar view: return the date under (x, y) if any
+pub fn hit_test_monthly(x: u16, y: u16, rect: Rect, app: &App) -> Option<NaiveDate> {
+    let grid = CalendarGrid::new(app.view_year, app.view_month, app.config.first_day_of_week);
+    let inner = Block::default()
+        .borders(Borders::ALL)
+        .inner(rect);
+
+    if inner.height < 2 || inner.width < 20 {
+        return None;
+    }
+    if x < inner.x || x >= inner.x + inner.width || y < inner.y || y >= inner.y + inner.height {
+        return None;
+    }
+
+    // Header row is at inner.y
+    if y == inner.y {
+        return None; // weekday header
+    }
+
+    let col_width = inner.width / 7;
+    let col = ((x - inner.x) / col_width) as usize;
+    if col >= 7 {
+        return None;
+    }
+
+    // Week rows start at inner.y + 2 (header + blank row)
+    let week_row = if y >= inner.y + 2 {
+        (y - (inner.y + 2)) as usize
+    } else {
+        return None;
+    };
+
+    let weeks = grid.generate_cells(app.today, &app.holidays, &app.event_dates);
+    let week = weeks.get(week_row)?;
+    let cell = week.get(col)?;
+    Some(cell.date)
+}
 
 /// Calendar grid widget showing a monthly view
 pub struct CalendarView<'a> {
@@ -20,6 +59,7 @@ pub struct CalendarView<'a> {
     pub holidays: &'a HashMap<NaiveDate, String>,
     pub event_dates: &'a HashSet<NaiveDate>,
     pub config: &'a Config,
+    pub focused: bool,
 }
 
 impl<'a> CalendarView<'a> {
@@ -32,7 +72,12 @@ impl<'a> CalendarView<'a> {
         event_dates: &'a HashSet<NaiveDate>,
         config: &'a Config,
     ) -> Self {
-        Self { year, month, today, selected_date, holidays, event_dates, config }
+        Self { year, month, today, selected_date, holidays, event_dates, config, focused: false }
+    }
+
+    pub fn with_focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
+        self
     }
 }
 
@@ -58,7 +103,7 @@ impl<'a> Widget for CalendarView<'a> {
         let block = Block::default()
             .title(format!(" {} ", month_name))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(surface));
+            .border_style(Style::default().fg(if self.focused { accent } else { surface }));
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -120,4 +165,45 @@ impl<'a> Widget for CalendarView<'a> {
     }
 }
 
-use chrono::Datelike;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{App, FocusedPanel};
+    use crate::config::Config;
+    use chrono::NaiveDate;
+
+    fn make_test_app() -> App {
+        let mut app = App::new(Config::default()).unwrap();
+        app.view_year = 2026;
+        app.view_month = 6;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        app.today = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        app
+    }
+
+    #[test]
+    fn test_hit_test_monthly_correct() {
+        let app = make_test_app();
+        // Default config: Sunday start. June 1 2026 is Monday → offset 1.
+        // Rect: x=0, y=0, width=40, height=20
+        // Block borders at edges, inner: x=1..38, y=1..18
+        // Header at y=1, weeks start at y=3 (inner.y + 2)
+        // col_width = 37 / 7 = 5
+        // Day 1 (June 1): col=1, row=0 → x=6, y=3
+        let rect = Rect::new(0, 0, 40, 20);
+        let date = hit_test_monthly(6, 3, rect, &app);
+        assert_eq!(date, Some(NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()));
+
+        // Day 15: col = ((15-1) + 1) % 7 = 1, row = 2 → x=6, y=5
+        let date = hit_test_monthly(6, 5, rect, &app);
+        assert_eq!(date, Some(NaiveDate::from_ymd_opt(2026, 6, 15).unwrap()));
+    }
+
+    #[test]
+    fn test_hit_test_monthly_outside_returns_none() {
+        let app = make_test_app();
+        let rect = Rect::new(0, 0, 40, 20);
+        assert_eq!(hit_test_monthly(0, 0, rect, &app), None); // border
+        assert_eq!(hit_test_monthly(100, 100, rect, &app), None); // far outside
+    }
+}

@@ -7,4 +7,4 @@ pub mod upcoming_events;
 pub mod weekly_view;
 pub mod event_form;
 
-pub use layout::draw_ui;
+pub use layout::{draw_ui, compute_layout, LayoutRects};
