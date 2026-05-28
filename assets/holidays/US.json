@@ -1,0 +1,13 @@
+[
+  { "date": "2026-01-01", "name": "New Year's Day", "holiday_type": "public" },
+  { "date": "2026-01-19", "name": "Martin Luther King Jr. Day", "holiday_type": "public" },
+  { "date": "2026-02-16", "name": "Presidents' Day", "holiday_type": "public" },
+  { "date": "2026-05-25", "name": "Memorial Day", "holiday_type": "public" },
+  { "date": "2026-06-19", "name": "Juneteenth", "holiday_type": "public" },
+  { "date": "2026-07-04", "name": "Independence Day", "holiday_type": "public" },
+  { "date": "2026-09-07", "name": "Labor Day", "holiday_type": "public" },
+  { "date": "2026-10-12", "name": "Columbus Day", "holiday_type": "public" },
+  { "date": "2026-11-11", "name": "Veterans Day", "holiday_type": "public" },
+  { "date": "2026-11-26", "name": "Thanksgiving Day", "holiday_type": "public" },
+  { "date": "2026-12-25", "name": "Christmas Day", "holiday_type": "public" }
+]

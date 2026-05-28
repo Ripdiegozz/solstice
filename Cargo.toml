@@ -1,0 +1,37 @@
+[package]
+name = "solstice"
+version = "0.1.0"
+edition = "2024"
+description = "A local-first TUI calendar application"
+
+[dependencies]
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Date/Time
+chrono = "0.4"
+chrono-tz = "0.10"
+
+# Storage
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Google Calendar (optional sync)
+oauth2 = { version = "5.0.0", features = ["reqwest-blocking"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+
+# Utilities
+dirs = "6"
+anyhow = "1"
+
+[features]
+test-utils = []
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
