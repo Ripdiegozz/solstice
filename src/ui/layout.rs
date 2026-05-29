@@ -84,7 +84,6 @@ fn render_footer(area: Rect, buf: &mut ratatui::buffer::Buffer, app: &App) {
     };
 
     let accent = crate::ui::clock::parse_color(&app.config.theme.accent);
-    let muted = crate::ui::clock::parse_color(&app.config.theme.muted);
 
     // Left side: status message
     if let Some(ref msg) = app.status_message {
@@ -102,7 +101,7 @@ fn render_footer(area: Rect, buf: &mut ratatui::buffer::Buffer, app: &App) {
     // Right side: hint
     let hint = "ctrl+p: commands";
     let right_x = area.x + area.width.saturating_sub(hint.len() as u16);
-    buf.set_string(right_x, area.y, hint, Style::default().fg(muted));
+    buf.set_string(right_x, area.y, hint, Style::default().fg(accent));
 }
 
 /// Compute layout rectangles from the full terminal area
