@@ -59,7 +59,7 @@ impl<'a> Widget for UpcomingEventsWidget<'a> {
         let surface = parse_color(&self.config.theme.surface);
 
         let block = Block::default()
-            .title(" Upcoming ")
+            .title(" [3]-Upcoming ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(if self.focused { accent } else { surface }));
 

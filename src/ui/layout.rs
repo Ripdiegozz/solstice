@@ -1,12 +1,12 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    widgets::Widget,
 };
 
 use crate::app::{App, FocusedPanel, ViewMode};
 use crate::calendar::grid::week_start_date;
 use crate::ui::calendar_view::CalendarView;
+use crate::ui::clock::ClockWidget;
 use crate::ui::event_form;
 use crate::ui::event_list::EventListWidget;
 use crate::ui::upcoming_events::UpcomingEventsWidget;
@@ -20,53 +20,6 @@ pub struct LayoutRects {
     pub upcoming: Rect,
 }
 
-/// Render the single-line tabbed header (tabs left, compact clock right)
-fn render_header(area: Rect, buf: &mut ratatui::buffer::Buffer, app: &App) {
-    use ratatui::{
-        style::{Modifier, Style},
-        text::{Line, Span},
-        widgets::Paragraph,
-    };
-
-    let accent = crate::ui::clock::parse_color(&app.config.theme.accent);
-    let muted = crate::ui::clock::parse_color(&app.config.theme.muted);
-    let text_color = crate::ui::clock::parse_color(&app.config.theme.text);
-
-    // Build tab labels with active tab highlighted
-    let tabs = [
-        ("Calendar", FocusedPanel::Calendar),
-        ("Events", FocusedPanel::EventList),
-        ("Upcoming", FocusedPanel::Upcoming),
-    ];
-
-    let mut spans: Vec<Span> = Vec::new();
-    for (i, (label, panel)) in tabs.iter().enumerate() {
-        let num = i + 1;
-        let style = if app.focused_panel == *panel {
-            Style::default().fg(accent).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(muted)
-        };
-        spans.push(Span::styled(format!("[{}]", num), style));
-        spans.push(Span::styled(format!("-{}", label), style));
-    }
-
-    // Compact clock on the right
-    let time_str = app.now.format(&app.config.time_format).to_string();
-
-    let line = Line::from(spans);
-
-    // Render tabs left-aligned
-    Paragraph::new(line).render(
-        Rect::new(area.x, area.y, area.width.saturating_sub(time_str.len() as u16), area.height),
-        buf,
-    );
-
-    // Render clock right-aligned via simple right-justification
-    let right_x = area.x + area.width.saturating_sub(time_str.len() as u16);
-    buf.set_string(right_x, area.y, &time_str, Style::default().fg(text_color));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,29 +27,13 @@ mod tests {
     use crate::app::App;
     use crate::config::Config;
 
-    fn make_header_test_app() -> App {
+    fn make_test_app() -> App {
         App::new(Config::default()).expect("should create test app")
     }
 
     #[test]
-    fn test_header_renders_one_line_with_tabs() {
-        let app = make_header_test_app();
-        let area = Rect::new(0, 0, 80, 1);
-        let mut buf = Buffer::empty(area);
-
-        render_header(area, &mut buf, &app);
-
-        // Calendar tab [1] should be visible
-        let first_line = buf.content()
-            .iter()
-            .filter(|c| c.symbol() == "[")
-            .count();
-        assert!(first_line > 0, "tab brackets should be visible");
-    }
-
-    #[test]
     fn test_footer_renders_hint_on_right() {
-        let app = make_header_test_app();
+        let app = make_test_app();
         let area = Rect::new(0, 0, 80, 1);
         let mut buf = Buffer::empty(area);
 
@@ -110,29 +47,9 @@ mod tests {
         assert!(content.contains("ctrl+p"), "footer should contain ctrl+p hint: '{}'", content);
     }
 
-    // T13: Integration tests for layout rendering
-    #[test]
-    fn test_header_is_one_line() {
-        let app = make_header_test_app();
-        let area = Rect::new(0, 0, 80, 3); // 3-line area to verify only 1 line used
-        let mut buf = Buffer::empty(area);
-
-        render_header(Rect::new(0, 0, 80, 1), &mut buf, &app);
-
-        // Line 0 should have content (tabs or clock)
-        let line0_has_content = (0..80).any(|x| buf.cell((x, 0)).map_or(false, |c| c.symbol() != " "));
-        // Lines 1 and 2 should be empty
-        let lines_below_empty = (1..3).all(|y| {
-            (0..80).all(|x| buf.cell((x, y)).map_or(true, |c| c.symbol() == " "))
-        });
-
-        assert!(line0_has_content, "header line 0 should have content");
-        assert!(lines_below_empty, "header should be exactly 1 line, lines 1-2 empty");
-    }
-
     #[test]
     fn test_footer_is_one_line() {
-        let app = make_header_test_app();
+        let app = make_test_app();
         let area = Rect::new(0, 0, 80, 3);
         let mut buf = Buffer::empty(area);
 
@@ -149,12 +66,12 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_layout_header_is_one_line() {
+    fn test_compute_layout_header_is_three_lines() {
         let area = Rect::new(0, 0, 80, 24);
         let rects = compute_layout(area);
 
-        // Calendar starts at y=1 (header is y=0, 1 line)
-        assert_eq!(rects.calendar.y, 1, "calendar should start after 1-line header");
+        // Calendar starts at y=3 (header is y=0..2, 3 lines)
+        assert_eq!(rects.calendar.y, 3, "calendar should start after 3-line header");
     }
 }
 
@@ -163,7 +80,7 @@ fn render_footer(area: Rect, buf: &mut ratatui::buffer::Buffer, app: &App) {
     use ratatui::{
         style::Style,
         text::{Line, Span},
-        widgets::Paragraph,
+        widgets::{Paragraph, Widget},
     };
 
     let accent = crate::ui::clock::parse_color(&app.config.theme.accent);
@@ -193,7 +110,7 @@ pub fn compute_layout(area: Rect) -> LayoutRects {
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // Top bar (tabbed header)
+            Constraint::Length(3),  // Top bar (clock)
             Constraint::Min(10),    // Content
             Constraint::Length(1),  // Bottom bar
         ])
@@ -232,14 +149,15 @@ pub fn draw_ui(f: &mut Frame, app: &App) {
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // Top bar (tabbed header + compact clock)
+            Constraint::Length(3),  // Top bar (clock)
             Constraint::Min(10),    // Content area
             Constraint::Length(1),  // Bottom bar (status + hint)
         ])
         .split(f.area());
 
-    // Top bar: tabbed header with compact clock
-    render_header(main_chunks[0], f.buffer_mut(), app);
+    // Top bar: clock widget
+    let clock = ClockWidget::new(app.now, &app.config);
+    f.render_widget(clock, main_chunks[0]);
 
     // Content area: calendar (left) + events (right)
     let content_chunks = Layout::default()

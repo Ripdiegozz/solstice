@@ -95,13 +95,8 @@ impl<'a> Widget for CalendarView<'a> {
         let event_color = parse_color(&self.config.theme.event);
         let surface = parse_color(&self.config.theme.surface);
 
-        let month_name = chrono::NaiveDate::from_ymd_opt(self.year, self.month, 1)
-            .unwrap()
-            .format("%B %Y")
-            .to_string();
-
         let block = Block::default()
-            .title(format!(" {} ", month_name))
+            .title(" [1]-Calendar ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(if self.focused { accent } else { surface }));
 

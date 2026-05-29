@@ -725,10 +725,23 @@ impl App {
     }
 
     /// Cycle focus to the next panel (Tab behavior)
+    /// Auto-selects the first item in list panels so the user knows they can navigate.
     pub fn cycle_focus(&mut self) {
         self.focused_panel = match self.focused_panel {
-            FocusedPanel::Calendar => FocusedPanel::EventList,
-            FocusedPanel::EventList => FocusedPanel::Upcoming,
+            FocusedPanel::Calendar => {
+                // Moving to EventList: auto-select first event if any
+                if !self.selected_day_events.is_empty() && self.selected_event_index.is_none() {
+                    self.selected_event_index = Some(0);
+                }
+                FocusedPanel::EventList
+            }
+            FocusedPanel::EventList => {
+                // Moving to Upcoming: auto-select first upcoming event if any
+                if !self.upcoming_events.is_empty() && self.selected_upcoming_index.is_none() {
+                    self.selected_upcoming_index = Some(0);
+                }
+                FocusedPanel::Upcoming
+            }
             FocusedPanel::Upcoming => FocusedPanel::Calendar,
         };
     }
@@ -1627,7 +1640,6 @@ mod tests {
         assert_eq!(app.focused_panel, FocusedPanel::Calendar);
 
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let key = KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE);
         // Simulate what main.rs does
         app.focus_panel(2);
         assert_eq!(app.focused_panel, FocusedPanel::EventList);

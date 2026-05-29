@@ -60,7 +60,7 @@ impl<'a> Widget for EventListWidget<'a> {
         let surface = parse_color(&self.config.theme.surface);
 
         let block = Block::default()
-            .title(format!(" {} ", self.selected_date_label))
+            .title(" [2]-Events ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(if self.focused { accent } else { surface }));
 
