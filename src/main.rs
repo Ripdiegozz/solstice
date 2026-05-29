@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossterm::{
     cursor::Show,
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -97,13 +97,27 @@ fn run_app(
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    // Modal-aware key dispatch
+                    // 5-way key dispatch: modal → confirm_delete → palette → detail → normal
                     if app.modal.is_some() {
                         app.handle_modal_key(key);
                     } else if app.confirm_delete {
                         app.handle_delete_confirm(key);
+                    } else if app.command_palette_open {
+                        app.handle_command_palette_key(key);
+                    } else if app.event_detail.is_some() {
+                        app.handle_event_detail_key(key);
                     } else {
-                        // Numbered panel switching (absorbed when modal/confirm open)
+                        // Normal mode: special bindings
+                        match key.code {
+                            KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
+                                app.toggle_command_palette();
+                            }
+                            KeyCode::Enter => {
+                                app.open_event_detail_for_selected();
+                            }
+                            _ => {}
+                        }
+                        // Numbered panel switching
                         match key.code {
                             KeyCode::Char('1') => app.focus_panel(1),
                             KeyCode::Char('2') => app.focus_panel(2),
@@ -113,7 +127,7 @@ fn run_app(
                     }
                 }
                 Event::Mouse(mouse) => {
-                    if app.modal.is_some() || app.confirm_delete {
+                    if app.modal.is_some() || app.confirm_delete || app.command_palette_open || app.event_detail.is_some() {
                         app.handle_mouse(mouse, None);
                     } else {
                         let size = terminal.size()?;

@@ -186,3 +186,287 @@ pub fn render_delete_confirm(area: Rect, buf: &mut Buffer, config: &Config) {
         );
     }
 }
+
+/// Render the command palette overlay (centered, 60%×40%)
+pub fn render_command_palette(area: Rect, buf: &mut Buffer, config: &Config) {
+    let accent = parse_color(&config.theme.accent);
+    let text_color = parse_color(&config.theme.text);
+    let base = parse_color(&config.theme.base);
+    let muted = parse_color(&config.theme.muted);
+
+    let width = (area.width as f32 * 0.6) as u16;
+    let height = (area.height as f32 * 0.4) as u16;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let palette_area = Rect::new(x, y, width, height);
+
+    Clear.render(palette_area, buf);
+
+    let block = Block::default()
+        .title(" Commands ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(accent))
+        .style(Style::default().bg(base));
+
+    let inner = block.inner(palette_area);
+    block.render(palette_area, buf);
+
+    if inner.height < 2 || inner.width < 5 {
+        return;
+    }
+
+    // List of commands
+    let commands = [
+        ("n", "New event"),
+        ("e", "Edit event"),
+        ("d", "Delete event"),
+        ("v", "Toggle month/week view"),
+        ("t", "Go to today"),
+        ("1/2/3", "Switch panel"),
+        ("Tab", "Cycle focus"),
+        ("hjkl/arrows", "Navigate"),
+        ("Ctrl+P", "Toggle palette"),
+        ("q", "Quit"),
+    ];
+
+    let mut y_pos = inner.y;
+    for (key, desc) in &commands {
+        if y_pos >= inner.y + inner.height {
+            break;
+        }
+        let line = Line::from(vec![
+            Span::styled(format!(" {} ", key), Style::default().fg(accent).add_modifier(Modifier::BOLD)),
+            Span::styled(*desc, Style::default().fg(text_color)),
+        ]);
+        Paragraph::new(line).render(
+            Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
+            buf,
+        );
+        y_pos += 1;
+    }
+
+    // Footer hint
+    if y_pos < inner.y + inner.height {
+        let hint = Line::from(Span::styled(
+            "Esc, Ctrl+P, or q to close",
+            Style::default().fg(muted),
+        ));
+        Paragraph::new(hint).render(
+            Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
+            buf,
+        );
+    }
+}
+
+/// Render the event detail overlay (centered, 50% width, auto-height)
+pub fn render_event_detail(event: &crate::events::Event, area: Rect, buf: &mut Buffer, config: &Config) {
+    let accent = parse_color(&config.theme.accent);
+    let text_color = parse_color(&config.theme.text);
+    let base = parse_color(&config.theme.base);
+    let muted = parse_color(&config.theme.muted);
+
+    let width = (area.width as f32 * 0.5) as u16;
+    // Calculate height based on content: title + date + time + desc + recurrence + padding
+    let has_desc = event.description.as_ref().is_some_and(|d| !d.is_empty());
+    let desc_lines = if has_desc { 2 } else { 0 };
+    let height = (7 + desc_lines).min(area.height.saturating_sub(4));
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let detail_area = Rect::new(x, y, width, height);
+
+    Clear.render(detail_area, buf);
+
+    let block = Block::default()
+        .title(" Event Details ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(accent))
+        .style(Style::default().bg(base));
+
+    let inner = block.inner(detail_area);
+    block.render(detail_area, buf);
+
+    if inner.height < 3 || inner.width < 10 {
+        return;
+    }
+
+    let mut y_pos = inner.y;
+
+    // Title
+    let title_line = Line::from(vec![
+        Span::styled("Title: ", Style::default().fg(muted)),
+        Span::styled(&event.title, Style::default().fg(text_color).add_modifier(Modifier::BOLD)),
+    ]);
+    Paragraph::new(title_line).render(
+        Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
+        buf,
+    );
+    y_pos += 1;
+
+    // Date
+    let date_str = event.date.format("%A, %B %d, %Y").to_string();
+    let date_line = Line::from(vec![
+        Span::styled("Date: ", Style::default().fg(muted)),
+        Span::styled(date_str, Style::default().fg(text_color)),
+    ]);
+    Paragraph::new(date_line).render(
+        Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
+        buf,
+    );
+    y_pos += 1;
+
+    // Time
+    let time_str = match (&event.start_time, &event.end_time) {
+        (Some(s), Some(e)) => format!("{} - {}", s, e),
+        (Some(s), None) => s.clone(),
+        (None, Some(e)) => format!("? - {}", e),
+        (None, None) => "All day".to_string(),
+    };
+    let time_line = Line::from(vec![
+        Span::styled("Time: ", Style::default().fg(muted)),
+        Span::styled(time_str, Style::default().fg(text_color)),
+    ]);
+    Paragraph::new(time_line).render(
+        Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
+        buf,
+    );
+    y_pos += 1;
+
+    // Recurrence
+    let rec_str = match event.recurrence {
+        crate::events::Recurrence::None => "None".to_string(),
+        crate::events::Recurrence::Daily => "Daily".to_string(),
+        crate::events::Recurrence::Weekly => "Weekly".to_string(),
+        crate::events::Recurrence::Monthly => "Monthly".to_string(),
+    };
+    let rec_line = Line::from(vec![
+        Span::styled("Recurrence: ", Style::default().fg(muted)),
+        Span::styled(rec_str, Style::default().fg(text_color)),
+    ]);
+    Paragraph::new(rec_line).render(
+        Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
+        buf,
+    );
+    y_pos += 1;
+
+    // Description (if present)
+    if let Some(ref desc) = event.description {
+        if !desc.is_empty() {
+            let desc_label = Line::from(Span::styled("Description:", Style::default().fg(muted)));
+            Paragraph::new(desc_label).render(
+                Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
+                buf,
+            );
+            y_pos += 1;
+
+            let desc_text = Line::from(Span::styled(desc.as_str(), Style::default().fg(text_color)));
+            Paragraph::new(desc_text).render(
+                Rect::new(inner.x + 2, y_pos, inner.width.saturating_sub(3), 1),
+                buf,
+            );
+            y_pos += 1;
+        }
+    }
+
+    y_pos += 1;
+    // Footer hint
+    if y_pos < inner.y + inner.height {
+        let hint = Line::from(Span::styled(
+            "Esc or Enter to close",
+            Style::default().fg(muted),
+        ));
+        Paragraph::new(hint).render(
+            Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
+            buf,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{buffer::Buffer, layout::Rect};
+    use crate::config::Config;
+
+    #[test]
+    fn test_render_command_palette_has_border_and_text() {
+        let config = Config::default();
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+
+        render_command_palette(area, &mut buf, &config);
+
+        let content: String = buf.content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(content.contains("Commands"), "should have title 'Commands'");
+    }
+
+    #[test]
+    fn test_render_command_palette_shows_commands() {
+        let config = Config::default();
+        let area = Rect::new(0, 0, 100, 30);
+        let mut buf = Buffer::empty(area);
+
+        render_command_palette(area, &mut buf, &config);
+
+        let content: String = buf.content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(content.contains("New event"), "should list 'New event' command");
+        assert!(content.contains("Toggle palette"), "should list 'Toggle palette' command");
+    }
+
+    #[test]
+    fn test_render_event_detail_shows_fields() {
+        let config = Config::default();
+        let event = crate::events::Event {
+            id: 1,
+            title: "Team Meeting".to_string(),
+            description: Some("Weekly sync".to_string()),
+            date: chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+            start_time: Some("10:00".to_string()),
+            end_time: Some("11:00".to_string()),
+            source: crate::events::EventSource::Local,
+            recurrence: crate::events::Recurrence::Weekly,
+        };
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+
+        render_event_detail(&event, area, &mut buf, &config);
+
+        let content: String = buf.content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(content.contains("Team Meeting"), "should show event title");
+        assert!(content.contains("June"), "should show date month in rendered output");
+    }
+
+    #[test]
+    fn test_render_event_detail_shows_time_and_recurrence() {
+        let config = Config::default();
+        let event = crate::events::Event {
+            id: 2,
+            title: "Lunch".to_string(),
+            description: None,
+            date: chrono::NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+            start_time: Some("12:00".to_string()),
+            end_time: Some("13:00".to_string()),
+            source: crate::events::EventSource::Local,
+            recurrence: crate::events::Recurrence::Daily,
+        };
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+
+        render_event_detail(&event, area, &mut buf, &config);
+
+        let content: String = buf.content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(content.contains("12:00 - 13:00"), "should show time range");
+        assert!(content.contains("Daily"), "should show recurrence");
+    }
+}

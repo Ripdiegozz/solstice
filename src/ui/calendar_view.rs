@@ -168,7 +168,7 @@ impl<'a> Widget for CalendarView<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{App, FocusedPanel};
+    use crate::app::App;
     use crate::config::Config;
     use chrono::NaiveDate;
 

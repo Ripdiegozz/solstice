@@ -233,6 +233,8 @@ pub struct App {
     pub modal: Option<ModalState>,
     pub selected_event_index: Option<usize>,
     pub confirm_delete: bool,
+    pub command_palette_open: bool,
+    pub event_detail: Option<crate::events::Event>,
     pub status_message: Option<String>,
 
     // Focus system
@@ -292,6 +294,8 @@ impl App {
             modal: None,
             selected_event_index: None,
             confirm_delete: false,
+            command_palette_open: false,
+            event_detail: None,
             status_message: None,
             focused_panel: FocusedPanel::Calendar,
             selected_upcoming_index: None,
@@ -826,6 +830,66 @@ impl App {
         }
     }
 
+    /// Handle a key event when the command palette is open.
+    /// Returns true if the key was handled (absorbed).
+    pub fn handle_command_palette_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        match key.code {
+            KeyCode::Esc => {
+                self.command_palette_open = false;
+            }
+            KeyCode::Char('q') if key.modifiers.is_empty() => {
+                self.command_palette_open = false;
+            }
+            KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
+                self.command_palette_open = false;
+            }
+            _ => {} // Absorb all other keys
+        }
+        true
+    }
+
+    /// Handle a key event when the event detail overlay is open.
+    /// Returns true if the key was handled (absorbed).
+    pub fn handle_event_detail_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter => {
+                self.event_detail = None;
+            }
+            _ => {} // Absorb all other keys
+        }
+        true
+    }
+
+    /// Toggle the command palette open/closed
+    pub fn toggle_command_palette(&mut self) {
+        self.command_palette_open = !self.command_palette_open;
+    }
+
+    /// Open event detail for the currently selected event in EventList or Upcoming
+    pub fn open_event_detail_for_selected(&mut self) {
+        match self.focused_panel {
+            FocusedPanel::EventList => {
+                if let Some(idx) = self.selected_event_index {
+                    if let Some(event) = self.selected_day_events.get(idx) {
+                        self.event_detail = Some(event.clone());
+                    }
+                }
+            }
+            FocusedPanel::Upcoming => {
+                if let Some(idx) = self.selected_upcoming_index {
+                    if let Some(event) = self.upcoming_events.get(idx) {
+                        self.event_detail = Some(event.clone());
+                    }
+                }
+            }
+            _ => {} // Calendar: no-op
+        }
+    }
+
     /// Handle a mouse event, optionally with layout rectangles for hit-testing
     pub fn handle_mouse(
         &mut self,
@@ -834,11 +898,13 @@ impl App {
     ) {
         use crossterm::event::{MouseButton, MouseEventKind};
 
-        // When modal or confirm dialog is open, close on any left click
-        if self.modal.is_some() || self.confirm_delete {
+        // When modal or confirm dialog or palette or detail is open, close on any left click
+        if self.modal.is_some() || self.confirm_delete || self.command_palette_open || self.event_detail.is_some() {
             if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
                 self.modal = None;
                 self.confirm_delete = false;
+                self.command_palette_open = false;
+                self.event_detail = None;
             }
             return;
         }
@@ -1221,6 +1287,180 @@ mod tests {
         }
     }
 
+    // T1: New overlay state fields default correctly
+    #[test]
+    fn test_command_palette_open_defaults_to_false() {
+        let app = make_test_app();
+        assert!(!app.command_palette_open);
+    }
+
+    #[test]
+    fn test_event_detail_defaults_to_none() {
+        let app = make_test_app();
+        assert!(app.event_detail.is_none());
+    }
+
+    // T2: Command palette key handler tests
+    #[test]
+    fn test_command_palette_absorbs_key_stays_open() {
+        let mut app = make_test_app();
+        app.command_palette_open = true;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let x_key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        let handled = app.handle_command_palette_key(x_key);
+        assert!(handled, "'x' should be absorbed");
+        assert!(app.command_palette_open, "palette should stay open on 'x'");
+    }
+
+    #[test]
+    fn test_command_palette_closes_on_esc() {
+        let mut app = make_test_app();
+        app.command_palette_open = true;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let handled = app.handle_command_palette_key(esc);
+        assert!(handled);
+        assert!(!app.command_palette_open, "palette should close on Esc");
+    }
+
+    #[test]
+    fn test_command_palette_closes_on_q() {
+        let mut app = make_test_app();
+        app.command_palette_open = true;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let q_key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
+        let handled = app.handle_command_palette_key(q_key);
+        assert!(handled);
+        assert!(!app.command_palette_open, "palette should close on 'q'");
+    }
+
+    #[test]
+    fn test_command_palette_closes_on_ctrl_p() {
+        let mut app = make_test_app();
+        app.command_palette_open = true;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let ctrl_p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+        let handled = app.handle_command_palette_key(ctrl_p);
+        assert!(handled);
+        assert!(!app.command_palette_open, "palette should close on Ctrl+P");
+    }
+
+    // T3: Event detail key handler tests
+    #[test]
+    fn test_event_detail_closes_on_esc() {
+        let mut app = make_test_app();
+        app.event_detail = Some(make_test_event(1, "Test"));
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let handled = app.handle_event_detail_key(esc);
+        assert!(handled);
+        assert!(app.event_detail.is_none(), "detail should close on Esc");
+    }
+
+    #[test]
+    fn test_event_detail_closes_on_enter() {
+        let mut app = make_test_app();
+        app.event_detail = Some(make_test_event(1, "Test"));
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let handled = app.handle_event_detail_key(enter);
+        assert!(handled);
+        assert!(app.event_detail.is_none(), "detail should close on Enter");
+    }
+
+    // T4: Mouse dismiss for new overlays
+    #[test]
+    fn test_mouse_dismisses_command_palette_and_event_detail() {
+        let mut app = make_test_app();
+        app.command_palette_open = true;
+        app.event_detail = Some(make_test_event(1, "Test"));
+
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse, None);
+        assert!(!app.command_palette_open, "command_palette should close on left-click");
+        assert!(app.event_detail.is_none(), "event_detail should close on left-click");
+    }
+
+    // T12: New handler method tests
+    #[test]
+    fn test_toggle_command_palette_flips_flag() {
+        let mut app = make_test_app();
+        assert!(!app.command_palette_open);
+
+        app.toggle_command_palette();
+        assert!(app.command_palette_open);
+
+        app.toggle_command_palette();
+        assert!(!app.command_palette_open);
+    }
+
+    #[test]
+    fn test_open_event_detail_from_event_list() {
+        let mut app = make_test_app();
+        app.selected_day_events = vec![
+            make_test_event(1, "Meeting"),
+            make_test_event(2, "Lunch"),
+        ];
+        app.selected_event_index = Some(0);
+        app.focused_panel = FocusedPanel::EventList;
+        assert!(app.event_detail.is_none());
+
+        app.open_event_detail_for_selected();
+        assert!(app.event_detail.is_some());
+        assert_eq!(app.event_detail.as_ref().unwrap().title, "Meeting");
+    }
+
+    #[test]
+    fn test_open_event_detail_from_upcoming() {
+        let mut app = make_test_app();
+        app.upcoming_events = vec![
+            make_test_event(1, "Meeting"),
+            make_test_event(2, "Lunch"),
+        ];
+        app.selected_upcoming_index = Some(1);
+        app.focused_panel = FocusedPanel::Upcoming;
+        assert!(app.event_detail.is_none());
+
+        app.open_event_detail_for_selected();
+        assert!(app.event_detail.is_some());
+        assert_eq!(app.event_detail.as_ref().unwrap().title, "Lunch");
+    }
+
+    #[test]
+    fn test_open_event_detail_from_calendar_does_nothing() {
+        let mut app = make_test_app();
+        app.focused_panel = FocusedPanel::Calendar;
+        // Even with events present, Calendar should not open detail
+        app.selected_day_events = vec![make_test_event(1, "Meeting")];
+        app.selected_event_index = Some(0);
+
+        app.open_event_detail_for_selected();
+        assert!(app.event_detail.is_none());
+    }
+
+    #[test]
+    fn test_open_event_detail_with_no_selection_does_nothing() {
+        let mut app = make_test_app();
+        app.selected_day_events = vec![make_test_event(1, "Meeting")];
+        app.selected_event_index = None; // no selection
+        app.focused_panel = FocusedPanel::EventList;
+
+        app.open_event_detail_for_selected();
+        assert!(app.event_detail.is_none());
+    }
+
     // Task 5.1: FocusedPanel default is Calendar
     #[test]
     fn test_focused_panel_default_is_calendar() {
@@ -1412,6 +1652,8 @@ mod tests {
             modal: None,
             selected_event_index: None,
             confirm_delete: false,
+            command_palette_open: false,
+            event_detail: None,
             status_message: None,
             focused_panel: FocusedPanel::Calendar,
             selected_upcoming_index: None,
@@ -1440,6 +1682,8 @@ mod tests {
             modal: None,
             selected_event_index: None,
             confirm_delete: false,
+            command_palette_open: false,
+            event_detail: None,
             status_message: None,
             focused_panel: FocusedPanel::Calendar,
             selected_upcoming_index: None,
