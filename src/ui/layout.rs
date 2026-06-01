@@ -177,7 +177,7 @@ pub fn draw_ui(f: &mut Frame, app: &App) {
                 app.today,
                 app.selected_date,
                 &app.holidays,
-                &app.event_dates,
+                &app.event_counts,
                 &app.config,
             ).with_focused(calendar_focused);
             f.render_widget(calendar, content_chunks[0]);

@@ -1,4 +1,5 @@
 use chrono::{Datelike, NaiveDate};
+use std::collections::HashMap;
 use crate::config::FirstDayOfWeek;
 
 /// Represents a single cell in the calendar grid
@@ -9,7 +10,7 @@ pub struct DayCell {
     pub is_today: bool,
     pub is_holiday: bool,
     pub holiday_name: Option<String>,
-    pub has_events: bool,
+    pub event_count: usize,
 }
 
 /// Calendar grid logic for a monthly view
@@ -50,8 +51,8 @@ impl CalendarGrid {
     pub fn generate_cells(
         &self,
         today: NaiveDate,
-        holidays: &std::collections::HashMap<NaiveDate, String>,
-        event_dates: &std::collections::HashSet<NaiveDate>,
+        holidays: &HashMap<NaiveDate, String>,
+        event_counts: &HashMap<NaiveDate, usize>,
     ) -> Vec<Vec<DayCell>> {
         let num_days = days_in_month(self.year, self.month);
         let offset = self.start_offset();
@@ -73,7 +74,7 @@ impl CalendarGrid {
                 is_today: false,
                 is_holiday: false,
                 holiday_name: None,
-                has_events: false,
+                event_count: 0,
             });
         }
 
@@ -83,7 +84,7 @@ impl CalendarGrid {
             let is_today = date == today;
             let holiday_name = holidays.get(&date).cloned();
             let is_holiday = holiday_name.is_some();
-            let has_events = event_dates.contains(&date);
+            let event_count = event_counts.get(&date).copied().unwrap_or(0);
 
             all_days.push(DayCell {
                 date,
@@ -91,7 +92,7 @@ impl CalendarGrid {
                 is_today,
                 is_holiday,
                 holiday_name,
-                has_events,
+                event_count,
             });
         }
 
@@ -108,7 +109,7 @@ impl CalendarGrid {
                     is_today: false,
                     is_holiday: false,
                     holiday_name: None,
-                    has_events: false,
+                    event_count: 0,
                 });
             }
         }
@@ -220,10 +221,10 @@ mod tests {
     fn test_generate_cells_has_correct_structure() {
         let grid = CalendarGrid::new(2026, 5, FirstDayOfWeek::Sunday);
         let today = NaiveDate::from_ymd_opt(2026, 5, 15).unwrap();
-        let holidays = std::collections::HashMap::new();
-        let events = std::collections::HashSet::new();
+        let holidays = HashMap::new();
+        let event_counts = HashMap::new();
 
-        let weeks = grid.generate_cells(today, &holidays, &events);
+        let weeks = grid.generate_cells(today, &holidays, &event_counts);
 
         // Should have 5-6 weeks
         assert!(weeks.len() >= 4 && weeks.len() <= 6);
@@ -234,5 +235,28 @@ mod tests {
         // Today should be marked
         let has_today = weeks.iter().flatten().any(|c| c.is_today);
         assert!(has_today);
+    }
+
+    #[test]
+    fn test_generate_cells_with_event_counts() {
+        let grid = CalendarGrid::new(2026, 6, FirstDayOfWeek::Sunday);
+        let today = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        let holidays = HashMap::new();
+
+        let mut event_counts = HashMap::new();
+        event_counts.insert(NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(), 3);
+        event_counts.insert(NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(), 1);
+
+        let weeks = grid.generate_cells(today, &holidays, &event_counts);
+
+        // Find cells with events
+        let cells: Vec<&DayCell> = weeks.iter().flatten().collect();
+        let jun1 = cells.iter().find(|c| c.date == NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()).unwrap();
+        let jun15 = cells.iter().find(|c| c.date == NaiveDate::from_ymd_opt(2026, 6, 15).unwrap()).unwrap();
+        let jun10 = cells.iter().find(|c| c.date == NaiveDate::from_ymd_opt(2026, 6, 10).unwrap()).unwrap();
+
+        assert_eq!(jun1.event_count, 3);
+        assert_eq!(jun15.event_count, 1);
+        assert_eq!(jun10.event_count, 0);
     }
 }

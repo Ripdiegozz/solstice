@@ -203,10 +203,9 @@ impl EventStore {
         }
     }
 
-    /// Get dates that have events (for showing dots on calendar)
+    /// Get event counts per day for a given month.
     /// Includes recurring event expansion within the month window.
-    pub fn dates_with_events(&self, year: i32, month: u32) -> Result<std::collections::HashSet<NaiveDate>> {
-        let _start = format!("{:04}-{:02}-01", year, month);
+    pub fn event_counts_for_month(&self, year: i32, month: u32) -> Result<std::collections::HashMap<NaiveDate, usize>> {
         let end_month = if month == 12 { 1 } else { month + 1 };
         let end_year = if month == 12 { year + 1 } else { year };
         let end = format!("{:04}-{:02}-01", end_year, end_month);
@@ -244,19 +243,19 @@ impl EventStore {
         let month_start = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
         let month_end = NaiveDate::from_ymd_opt(end_year, end_month, 1).unwrap();
 
-        let mut dates = std::collections::HashSet::new();
+        let mut counts = std::collections::HashMap::new();
 
         for event in &all_events {
             // Direct match: event falls within the month
             if event.date >= month_start && event.date < month_end {
-                dates.insert(event.date);
+                *counts.entry(event.date).or_insert(0) += 1;
             }
             // Recurrence expansion: check each day in the month
             if event.recurrence != Recurrence::None {
                 let mut d = month_start;
                 while d < month_end {
                     if Self::recurrence_matches(event, d) {
-                        dates.insert(d);
+                        *counts.entry(d).or_insert(0) += 1;
                     }
                     d = d.succ_opt().unwrap_or(d);
                     if d == month_end { break; }
@@ -264,7 +263,17 @@ impl EventStore {
             }
         }
 
-        Ok(dates)
+        Ok(counts)
+    }
+
+    /// Get dates that have events (for showing dots on calendar)
+    /// Includes recurring event expansion within the month window.
+    /// Delegates to `event_counts_for_month` and returns keys with count > 0.
+    pub fn dates_with_events(&self, year: i32, month: u32) -> Result<std::collections::HashSet<NaiveDate>> {
+        let counts = self.event_counts_for_month(year, month)?;
+        Ok(counts.into_iter().filter_map(|(date, count)| {
+            if count > 0 { Some(date) } else { None }
+        }).collect())
     }
 
     /// Get upcoming events from today
@@ -745,5 +754,103 @@ mod tests {
         let store = EventStore::open_in_memory().unwrap();
         let deleted = store.clear_gcal_events().unwrap();
         assert_eq!(deleted, 0, "Should return 0 when no gcal events exist");
+    }
+
+    // ── event_counts_for_month tests (tasks 4.1) ──
+
+    #[test]
+    fn test_event_counts_for_month_with_one_event() {
+        let store = EventStore::open_in_memory().unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        store.add_event("Lunch", date, None, None).unwrap();
+
+        let counts = store.event_counts_for_month(2026, 6).unwrap();
+        assert_eq!(counts.len(), 1);
+        assert_eq!(counts.get(&date), Some(&1_usize));
+    }
+
+    #[test]
+    fn test_event_counts_for_month_multiple_same_day() {
+        let store = EventStore::open_in_memory().unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        store.add_event("Standup", date, None, None).unwrap();
+        store.add_event("Lunch", date, None, None).unwrap();
+        store.add_event("Review", date, None, None).unwrap();
+
+        let counts = store.event_counts_for_month(2026, 6).unwrap();
+        assert_eq!(counts.get(&date), Some(&3_usize));
+    }
+
+    #[test]
+    fn test_event_counts_for_month_empty_month() {
+        let store = EventStore::open_in_memory().unwrap();
+        let counts = store.event_counts_for_month(2026, 12).unwrap();
+        assert!(counts.is_empty());
+    }
+
+    #[test]
+    fn test_event_counts_for_month_ignores_outside_month() {
+        let store = EventStore::open_in_memory().unwrap();
+        // Add events in May and July — should not appear in June counts
+        let may_date = NaiveDate::from_ymd_opt(2026, 5, 31).unwrap();
+        let july_date = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap();
+        store.add_event("May Event", may_date, None, None).unwrap();
+        store.add_event("July Event", july_date, None, None).unwrap();
+
+        let counts = store.event_counts_for_month(2026, 6).unwrap();
+        assert!(counts.is_empty());
+    }
+
+    #[test]
+    fn test_event_counts_for_month_with_recurring() {
+        let store = EventStore::open_in_memory().unwrap();
+        let start = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        store.add_event_with_recurrence("Daily", start, None, None, None, Recurrence::Daily).unwrap();
+
+        let counts = store.event_counts_for_month(2026, 6).unwrap();
+        // Daily recurrence from June 1 should generate counts for all 30 days of June
+        assert_eq!(counts.len(), 30);
+        for day in 1..=30 {
+            let d = NaiveDate::from_ymd_opt(2026, 6, day).unwrap();
+            assert_eq!(counts.get(&d), Some(&1_usize), "June {} should have count 1", day);
+        }
+    }
+
+    // ── dates_with_events delegation tests (task 4.2) ──
+
+    #[test]
+    fn test_dates_with_events_returns_only_dates_with_count_gt_0() {
+        let store = EventStore::open_in_memory().unwrap();
+        let date1 = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        let date2 = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        store.add_event("Event A", date1, None, None).unwrap();
+        store.add_event("Event B", date2, None, None).unwrap();
+
+        let dates = store.dates_with_events(2026, 6).unwrap();
+        assert_eq!(dates.len(), 2);
+        assert!(dates.contains(&date1));
+        assert!(dates.contains(&date2));
+        // Date with 0 events should not be present
+        assert!(!dates.contains(&NaiveDate::from_ymd_opt(2026, 6, 10).unwrap()));
+    }
+
+    #[test]
+    fn test_dates_with_events_and_counts_are_consistent() {
+        let store = EventStore::open_in_memory().unwrap();
+        let start = NaiveDate::from_ymd_opt(2026, 6, 3).unwrap();
+        store.add_event_with_recurrence("Weekly", start, None, None, None, Recurrence::Weekly).unwrap();
+
+        let counts = store.event_counts_for_month(2026, 6).unwrap();
+        let dates = store.dates_with_events(2026, 6).unwrap();
+
+        // dates should be exactly the keys from counts where count > 0
+        for (date, count) in &counts {
+            assert!(*count > 0, "All counts in map should be > 0");
+            assert!(dates.contains(date), "dates_with_events should include date with count > 0");
+        }
+        // And vice versa: every date in dates_with_events should be in counts
+        for date in &dates {
+            assert!(counts.contains_key(date), "counts should include date from dates_with_events");
+        }
     }
 }

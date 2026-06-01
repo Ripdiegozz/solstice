@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::{Datelike, NaiveDate};
 use chrono_tz::Tz;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::calendar::grid::week_start_date;
 use crate::calendar::holidays::{self, HolidayProvider};
@@ -217,7 +217,7 @@ pub struct App {
 
     // Data
     pub holidays: HashMap<NaiveDate, String>,
-    pub event_dates: HashSet<NaiveDate>,
+    pub event_counts: HashMap<NaiveDate, usize>,
     pub selected_day_events: Vec<Event>,
     pub upcoming_events: Vec<Event>,
     pub view_mode: ViewMode,
@@ -255,9 +255,9 @@ impl App {
 
         // Try to open event store (non-fatal if it fails)
         let event_store = EventStore::open().ok();
-        let event_dates = event_store
+        let event_counts = event_store
             .as_ref()
-            .and_then(|s| s.dates_with_events(today.year(), today.month()).ok())
+            .and_then(|s| s.event_counts_for_month(today.year(), today.month()).ok())
             .unwrap_or_default();
 
         let selected_day_events = event_store
@@ -280,7 +280,7 @@ impl App {
             view_month: today.month(),
             selected_date: today,
             holidays,
-            event_dates,
+            event_counts,
             selected_day_events,
             upcoming_events,
             view_mode: ViewMode::Monthly,
@@ -407,10 +407,10 @@ impl App {
             .load(&self.config.country_code, self.view_year)
             .unwrap_or_default();
 
-        // Reload event dates for the viewed month
-        self.event_dates = self.event_store
+        // Reload event counts for the viewed month
+        self.event_counts = self.event_store
             .as_ref()
-            .and_then(|s| s.dates_with_events(self.view_year, self.view_month).ok())
+            .and_then(|s| s.event_counts_for_month(self.view_year, self.view_month).ok())
             .unwrap_or_default();
 
         // Populate week_events when in weekly mode
@@ -1582,14 +1582,14 @@ mod tests {
 
         // Default config: Sunday start. June 1 2026 is Monday → offset 1.
         // Inner area: x=1..38, y=1..18
-        // Header at y=1, weeks start at y=3
-        // Day 1 (June 1): col=1, row=0 → x=6, y=3
-        // Day 15: col=1, row=2 → x=6, y=5
+        // Header at y=1, weeks start at y=3, CELL_HEIGHT=2
+        // Day 1 (June 1): col=1, row=0 → x=6, week_y=3
+        // Day 15 (June 15): col=1, row=2 → x=6, week_y = 3 + 2*2 = 7
         use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
         let mouse = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 6,
-            row: 5,
+            row: 7,
             modifiers: crossterm::event::KeyModifiers::NONE,
         };
         app.handle_mouse(mouse, Some(&rects));
@@ -1650,7 +1650,7 @@ mod tests {
             view_month: 6,
             selected_date: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
             holidays: HashMap::new(),
-            event_dates: HashSet::new(),
+            event_counts: HashMap::new(),
             selected_day_events: vec![],
             upcoming_events: vec![],
             view_mode: ViewMode::Monthly,
@@ -1680,7 +1680,7 @@ mod tests {
             view_month: 6,
             selected_date: NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
             holidays: HashMap::new(),
-            event_dates: HashSet::new(),
+            event_counts: HashMap::new(),
             selected_day_events: vec![],
             upcoming_events: vec![],
             view_mode: ViewMode::Monthly,
@@ -1829,10 +1829,10 @@ mod tests {
 
         app.refresh_data();
 
-        // Check that event_dates includes dates throughout the month
-        assert!(app.event_dates.contains(&NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()));
-        assert!(app.event_dates.contains(&NaiveDate::from_ymd_opt(2026, 6, 15).unwrap()));
-        assert!(app.event_dates.contains(&NaiveDate::from_ymd_opt(2026, 6, 30).unwrap()));
+        // Check that event_counts includes dates throughout the month
+        assert_eq!(app.event_counts.get(&NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()), Some(&1));
+        assert_eq!(app.event_counts.get(&NaiveDate::from_ymd_opt(2026, 6, 15).unwrap()), Some(&1));
+        assert_eq!(app.event_counts.get(&NaiveDate::from_ymd_opt(2026, 6, 30).unwrap()), Some(&1));
     }
 
     // Task 6.5: Edge case tests
