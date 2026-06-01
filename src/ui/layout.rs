@@ -83,13 +83,13 @@ fn render_footer(area: Rect, buf: &mut ratatui::buffer::Buffer, app: &App) {
         widgets::{Paragraph, Widget},
     };
 
-    let accent = crate::ui::clock::parse_color(&app.config.theme.accent);
+    use ratatui::style::Color;
 
     // Left side: status message
     if let Some(ref msg) = app.status_message {
         let status_line = Line::from(Span::styled(
             format!(" {} ", msg),
-            Style::default().fg(accent),
+            Style::default().fg(Color::Magenta),
         ));
         let left_width = (area.width as f32 * 0.4) as u16;
         Paragraph::new(status_line).render(
@@ -101,7 +101,7 @@ fn render_footer(area: Rect, buf: &mut ratatui::buffer::Buffer, app: &App) {
     // Right side: hint
     let hint = "ctrl+p: commands";
     let right_x = area.x + area.width.saturating_sub(hint.len() as u16);
-    buf.set_string(right_x, area.y, hint, Style::default().fg(accent));
+    buf.set_string(right_x, area.y, hint, Style::default().fg(Color::Magenta));
 }
 
 /// Compute layout rectangles from the full terminal area
@@ -217,7 +217,7 @@ pub fn draw_ui(f: &mut Frame, app: &App) {
     f.render_widget(event_list, right_chunks[0]);
 
     // Upcoming events
-    let upcoming = UpcomingEventsWidget::new(&app.upcoming_events, &app.config)
+    let upcoming = UpcomingEventsWidget::new(&app.upcoming_events)
         .with_focused(app.focused_panel == FocusedPanel::Upcoming)
         .with_selected_index(app.selected_upcoming_index);
     f.render_widget(upcoming, right_chunks[1]);

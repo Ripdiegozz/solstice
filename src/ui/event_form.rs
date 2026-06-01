@@ -1,13 +1,12 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
 
 use crate::app::ModalState;
-use crate::ui::clock::parse_color;
 use crate::ui::text_input::TextInputWidget;
 use crate::config::Config;
 
@@ -50,13 +49,7 @@ pub fn hit_test_modal(x: u16, y: u16, area: Rect, modal: &ModalState) -> Option<
 }
 
 /// Render the modal overlay centered on the screen
-pub fn render_modal(modal: &ModalState, config: &Config, area: Rect, buf: &mut Buffer) {
-    let accent = parse_color(&config.theme.accent);
-    let text_color = parse_color(&config.theme.text);
-    let surface = parse_color(&config.theme.surface);
-    let base = parse_color(&config.theme.base);
-    let muted = parse_color(&config.theme.muted);
-
+pub fn render_modal(modal: &ModalState, _config: &Config, area: Rect, buf: &mut Buffer) {
     // Calculate centered overlay dimensions (60% width × 70% height)
     let width = (area.width as f32 * 0.6) as u16;
     let height = (area.height as f32 * 0.7) as u16;
@@ -76,8 +69,7 @@ pub fn render_modal(modal: &ModalState, config: &Config, area: Rect, buf: &mut B
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(accent))
-        .style(Style::default().bg(base));
+        .border_style(Style::default().fg(Color::Magenta));
 
     let inner = block.inner(modal_area);
     block.render(modal_area, buf);
@@ -105,9 +97,9 @@ pub fn render_modal(modal: &ModalState, config: &Config, area: Rect, buf: &mut B
 
         // Label
         let label_style = if focused {
-            Style::default().fg(accent).add_modifier(Modifier::BOLD)
+            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(muted)
+            Style::default().fg(Color::DarkGray)
         };
         buf.set_string(inner.x, field_y, field.label, label_style);
 
@@ -117,9 +109,6 @@ pub fn render_modal(modal: &ModalState, config: &Config, area: Rect, buf: &mut B
             input: &field.input,
             label: "",
             focused,
-            accent_color: accent,
-            text_color,
-            surface_color: surface,
         };
         widget.render(input_area, buf);
     }
@@ -130,7 +119,7 @@ pub fn render_modal(modal: &ModalState, config: &Config, area: Rect, buf: &mut B
         let err_area = Rect::new(inner.x, err_y, inner.width, 1);
         Paragraph::new(Line::from(Span::styled(
             err.as_str(),
-            Style::default().fg(parse_color("#f38ba8")),
+            Style::default().fg(Color::Red),
         )))
         .render(err_area, buf);
     }
@@ -139,22 +128,18 @@ pub fn render_modal(modal: &ModalState, config: &Config, area: Rect, buf: &mut B
     let footer_y = inner.y + inner.height.saturating_sub(1);
     let footer_area = Rect::new(inner.x, footer_y, inner.width, 1);
     let hints = Line::from(vec![
-        Span::styled("Tab", Style::default().fg(surface).bg(accent)),
-        Span::styled(" navigate ", Style::default().fg(muted)),
-        Span::styled("Enter", Style::default().fg(surface).bg(accent)),
-        Span::styled(" save ", Style::default().fg(muted)),
-        Span::styled("Esc", Style::default().fg(surface).bg(accent)),
-        Span::styled(" cancel ", Style::default().fg(muted)),
+        Span::styled("Tab", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        Span::styled(" navigate ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Enter", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        Span::styled(" save ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Esc", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+        Span::styled(" cancel ", Style::default().fg(Color::DarkGray)),
     ]);
     Paragraph::new(hints).render(footer_area, buf);
 }
 
 /// Render delete confirmation prompt
-pub fn render_delete_confirm(area: Rect, buf: &mut Buffer, config: &Config) {
-    let accent = parse_color(&config.theme.accent);
-    let text_color = parse_color(&config.theme.text);
-    let base = parse_color(&config.theme.base);
-
+pub fn render_delete_confirm(area: Rect, buf: &mut Buffer, _config: &Config) {
     let width = 40u16.min(area.width.saturating_sub(4));
     let height = 5u16.min(area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(width)) / 2;
@@ -166,19 +151,18 @@ pub fn render_delete_confirm(area: Rect, buf: &mut Buffer, config: &Config) {
     let block = Block::default()
         .title(" Confirm Delete ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(accent))
-        .style(Style::default().bg(base));
+        .border_style(Style::default().fg(Color::Magenta));
 
     let inner = block.inner(confirm_area);
     block.render(confirm_area, buf);
 
     if inner.height >= 2 && inner.width >= 10 {
         let msg = Line::from(vec![
-            Span::styled("Delete this event? ", Style::default().fg(text_color)),
-            Span::styled("[y]", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-            Span::styled("es / ", Style::default().fg(text_color)),
-            Span::styled("[n]", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-            Span::styled("o", Style::default().fg(text_color)),
+            Span::styled("Delete this event? ", Style::default().fg(Color::White)),
+            Span::styled("[y]", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled("es / ", Style::default().fg(Color::White)),
+            Span::styled("[n]", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled("o", Style::default().fg(Color::White)),
         ]);
         Paragraph::new(msg).render(
             Rect::new(inner.x, inner.y + 1, inner.width, 1),
@@ -188,12 +172,7 @@ pub fn render_delete_confirm(area: Rect, buf: &mut Buffer, config: &Config) {
 }
 
 /// Render the command palette overlay (centered, 60%×40%)
-pub fn render_command_palette(area: Rect, buf: &mut Buffer, config: &Config) {
-    let accent = parse_color(&config.theme.accent);
-    let text_color = parse_color(&config.theme.text);
-    let base = parse_color(&config.theme.base);
-    let muted = parse_color(&config.theme.muted);
-
+pub fn render_command_palette(area: Rect, buf: &mut Buffer, _config: &Config) {
     let width = (area.width as f32 * 0.6) as u16;
     let height = (area.height as f32 * 0.4) as u16;
     let x = area.x + (area.width.saturating_sub(width)) / 2;
@@ -205,8 +184,7 @@ pub fn render_command_palette(area: Rect, buf: &mut Buffer, config: &Config) {
     let block = Block::default()
         .title(" Commands ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(accent))
-        .style(Style::default().bg(base));
+        .border_style(Style::default().fg(Color::Magenta));
 
     let inner = block.inner(palette_area);
     block.render(palette_area, buf);
@@ -235,8 +213,8 @@ pub fn render_command_palette(area: Rect, buf: &mut Buffer, config: &Config) {
             break;
         }
         let line = Line::from(vec![
-            Span::styled(format!(" {} ", key), Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-            Span::styled(*desc, Style::default().fg(text_color)),
+            Span::styled(format!(" {} ", key), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled(*desc, Style::default().fg(Color::White)),
         ]);
         Paragraph::new(line).render(
             Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
@@ -249,7 +227,7 @@ pub fn render_command_palette(area: Rect, buf: &mut Buffer, config: &Config) {
     if y_pos < inner.y + inner.height {
         let hint = Line::from(Span::styled(
             "Esc, Ctrl+P, or q to close",
-            Style::default().fg(muted),
+            Style::default().fg(Color::DarkGray),
         ));
         Paragraph::new(hint).render(
             Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
@@ -259,12 +237,7 @@ pub fn render_command_palette(area: Rect, buf: &mut Buffer, config: &Config) {
 }
 
 /// Render the event detail overlay (centered, 50% width, auto-height)
-pub fn render_event_detail(event: &crate::events::Event, area: Rect, buf: &mut Buffer, config: &Config) {
-    let accent = parse_color(&config.theme.accent);
-    let text_color = parse_color(&config.theme.text);
-    let base = parse_color(&config.theme.base);
-    let muted = parse_color(&config.theme.muted);
-
+pub fn render_event_detail(event: &crate::events::Event, area: Rect, buf: &mut Buffer, _config: &Config) {
     let width = (area.width as f32 * 0.5) as u16;
     // Calculate height based on content: title + date + time + desc + recurrence + padding
     let has_desc = event.description.as_ref().is_some_and(|d| !d.is_empty());
@@ -279,8 +252,7 @@ pub fn render_event_detail(event: &crate::events::Event, area: Rect, buf: &mut B
     let block = Block::default()
         .title(" Event Details ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(accent))
-        .style(Style::default().bg(base));
+        .border_style(Style::default().fg(Color::Magenta));
 
     let inner = block.inner(detail_area);
     block.render(detail_area, buf);
@@ -293,8 +265,8 @@ pub fn render_event_detail(event: &crate::events::Event, area: Rect, buf: &mut B
 
     // Title
     let title_line = Line::from(vec![
-        Span::styled("Title: ", Style::default().fg(muted)),
-        Span::styled(&event.title, Style::default().fg(text_color).add_modifier(Modifier::BOLD)),
+        Span::styled("Title: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(&event.title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     ]);
     Paragraph::new(title_line).render(
         Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
@@ -305,8 +277,8 @@ pub fn render_event_detail(event: &crate::events::Event, area: Rect, buf: &mut B
     // Date
     let date_str = event.date.format("%A, %B %d, %Y").to_string();
     let date_line = Line::from(vec![
-        Span::styled("Date: ", Style::default().fg(muted)),
-        Span::styled(date_str, Style::default().fg(text_color)),
+        Span::styled("Date: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(date_str, Style::default().fg(Color::White)),
     ]);
     Paragraph::new(date_line).render(
         Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
@@ -322,8 +294,8 @@ pub fn render_event_detail(event: &crate::events::Event, area: Rect, buf: &mut B
         (None, None) => "All day".to_string(),
     };
     let time_line = Line::from(vec![
-        Span::styled("Time: ", Style::default().fg(muted)),
-        Span::styled(time_str, Style::default().fg(text_color)),
+        Span::styled("Time: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(time_str, Style::default().fg(Color::White)),
     ]);
     Paragraph::new(time_line).render(
         Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
@@ -339,8 +311,8 @@ pub fn render_event_detail(event: &crate::events::Event, area: Rect, buf: &mut B
         crate::events::Recurrence::Monthly => "Monthly".to_string(),
     };
     let rec_line = Line::from(vec![
-        Span::styled("Recurrence: ", Style::default().fg(muted)),
-        Span::styled(rec_str, Style::default().fg(text_color)),
+        Span::styled("Recurrence: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(rec_str, Style::default().fg(Color::White)),
     ]);
     Paragraph::new(rec_line).render(
         Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
@@ -351,14 +323,14 @@ pub fn render_event_detail(event: &crate::events::Event, area: Rect, buf: &mut B
     // Description (if present)
     if let Some(ref desc) = event.description {
         if !desc.is_empty() {
-            let desc_label = Line::from(Span::styled("Description:", Style::default().fg(muted)));
+            let desc_label = Line::from(Span::styled("Description:", Style::default().fg(Color::DarkGray)));
             Paragraph::new(desc_label).render(
                 Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),
                 buf,
             );
             y_pos += 1;
 
-            let desc_text = Line::from(Span::styled(desc.as_str(), Style::default().fg(text_color)));
+            let desc_text = Line::from(Span::styled(desc.as_str(), Style::default().fg(Color::White)));
             Paragraph::new(desc_text).render(
                 Rect::new(inner.x + 2, y_pos, inner.width.saturating_sub(3), 1),
                 buf,
@@ -372,7 +344,7 @@ pub fn render_event_detail(event: &crate::events::Event, area: Rect, buf: &mut B
     if y_pos < inner.y + inner.height {
         let hint = Line::from(Span::styled(
             "Esc or Enter to close",
-            Style::default().fg(muted),
+            Style::default().fg(Color::DarkGray),
         ));
         Paragraph::new(hint).render(
             Rect::new(inner.x + 1, y_pos, inner.width.saturating_sub(2), 1),

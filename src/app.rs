@@ -113,10 +113,7 @@ impl ModalState {
         // Start time: HH:MM when non-empty
         let start_str = self.fields[2].input.value().trim();
         let start_time = if !start_str.is_empty() {
-            match parse_time(start_str) {
-                Ok(t) => Some(t),
-                Err(e) => return Err(e),
-            }
+            Some(parse_time(start_str)?)
         } else {
             None
         };
@@ -124,10 +121,7 @@ impl ModalState {
         // End time: HH:MM when non-empty
         let end_str = self.fields[3].input.value().trim();
         let end_time = if !end_str.is_empty() {
-            match parse_time(end_str) {
-                Ok(t) => Some(t),
-                Err(e) => return Err(e),
-            }
+            Some(parse_time(end_str)?)
         } else {
             None
         };

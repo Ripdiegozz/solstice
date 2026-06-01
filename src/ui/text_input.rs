@@ -109,13 +109,12 @@ pub struct TextInputWidget<'a> {
     pub input: &'a TextInput,
     pub label: &'a str,
     pub focused: bool,
-    pub accent_color: ratatui::style::Color,
-    pub text_color: ratatui::style::Color,
-    pub surface_color: ratatui::style::Color,
 }
 
 impl<'a> Widget for TextInputWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        use ratatui::style::Color;
+
         if area.width == 0 || area.height == 0 {
             return;
         }
@@ -148,14 +147,14 @@ impl<'a> Widget for TextInputWidget<'a> {
             };
 
             let mut spans = vec![
-                Span::styled(before_cursor, Style::default().fg(self.text_color)),
+                Span::styled(before_cursor, Style::default().fg(Color::White)),
                 Span::styled(
                     cursor_char.to_string(),
                     Style::default()
-                        .fg(self.accent_color)
+                        .fg(Color::Magenta)
                         .add_modifier(Modifier::UNDERLINED | Modifier::BOLD),
                 ),
-                Span::styled(after_cursor, Style::default().fg(self.text_color)),
+                Span::styled(after_cursor, Style::default().fg(Color::White)),
             ];
 
             // Pad remaining width
@@ -168,7 +167,7 @@ impl<'a> Widget for TextInputWidget<'a> {
             for x in area.left()..area.right() {
                 if let Some(cell) = buf.cell_mut((x, area.bottom().saturating_sub(1))) {
                     cell.set_symbol("─");
-                    cell.set_style(Style::default().fg(self.accent_color));
+                    cell.set_style(Style::default().fg(Color::Magenta));
                 }
             }
 
@@ -177,7 +176,7 @@ impl<'a> Widget for TextInputWidget<'a> {
             // Unfocused: just render the text with muted underline
             let mut spans = vec![Span::styled(
                 display_text,
-                Style::default().fg(self.text_color),
+                Style::default().fg(Color::White),
             )];
             if display_text.len() < max_width {
                 spans.push(Span::raw(" ".repeat(max_width - display_text.len())));
@@ -187,7 +186,7 @@ impl<'a> Widget for TextInputWidget<'a> {
             for x in area.left()..area.right() {
                 if let Some(cell) = buf.cell_mut((x, area.bottom().saturating_sub(1))) {
                     cell.set_symbol("─");
-                    cell.set_style(Style::default().fg(self.surface_color));
+                    cell.set_style(Style::default().fg(Color::DarkGray));
                 }
             }
 
@@ -299,9 +298,6 @@ mod tests {
             input: &input,
             label: "Test",
             focused: true,
-            accent_color: ratatui::style::Color::Magenta,
-            text_color: ratatui::style::Color::White,
-            surface_color: ratatui::style::Color::DarkGray,
         };
 
         let area = Rect::new(0, 0, 20, 3);
@@ -322,9 +318,6 @@ mod tests {
             input: &input,
             label: "Test",
             focused: false,
-            accent_color: ratatui::style::Color::Magenta,
-            text_color: ratatui::style::Color::White,
-            surface_color: ratatui::style::Color::DarkGray,
         };
 
         let area = Rect::new(0, 0, 20, 3);

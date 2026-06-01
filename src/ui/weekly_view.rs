@@ -2,7 +2,7 @@ use chrono::{Datelike, NaiveDate};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     widgets::{Block, Borders, Widget},
 };
 use std::collections::HashMap;
@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use crate::app::App;
 use crate::config::Config;
 use crate::events::Event;
-use crate::ui::clock::parse_color;
 
 /// Hit-test a weekly calendar view: return the date under (x, y) if any
 pub fn hit_test_weekly(x: u16, y: u16, rect: Rect, app: &App) -> Option<NaiveDate> {
@@ -64,18 +63,11 @@ impl<'a> WeeklyView<'a> {
 
 impl<'a> Widget for WeeklyView<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let text_color = parse_color(&self.config.theme.text);
-        let _muted = parse_color(&self.config.theme.muted);
-        let accent = parse_color(&self.config.theme.accent);
-        let today_color = parse_color(&self.config.theme.today);
-        let holiday_color = parse_color(&self.config.theme.holiday);
-        let surface = parse_color(&self.config.theme.surface);
-
         let week_end = self.week_start + chrono::Duration::days(6);
         let block = Block::default()
             .title(format!(" Week of {} ", self.week_start.format("%b %-d")))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(if self.focused { accent } else { surface }));
+            .border_style(Style::default().fg(if self.focused { Color::Magenta } else { Color::DarkGray }));
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -110,19 +102,19 @@ impl<'a> Widget for WeeklyView<'a> {
             let events = self.week_events.get(&date).map(|v| v.as_slice()).unwrap_or(&[]);
 
             // Compute style for this row
-            let date_style = if is_today {
-                Style::default()
-                    .fg(today_color)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-            } else if is_selected {
-                Style::default()
-                    .fg(accent)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_holiday {
-                Style::default().fg(holiday_color)
-            } else {
-                Style::default().fg(text_color)
-            };
+                let date_style = if is_today {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                } else if is_selected {
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD)
+                } else if is_holiday {
+                    Style::default().fg(Color::Red)
+                } else {
+                    Style::default().fg(Color::White)
+                };
 
             // Day name + date
             let date_label = format!("{} {:>2}", day_name, date.day());
@@ -131,7 +123,7 @@ impl<'a> Widget for WeeklyView<'a> {
             // Event summary
             let summary_x = inner.x + 7;
             if summary_x < inner.x + inner.width && !events.is_empty() {
-                let event_color = parse_color(&self.config.theme.event);
+                let event_color = Color::Green;
                 let max_len = (inner.x + inner.width - summary_x) as usize;
 
                 let summaries: Vec<String> = events.iter()

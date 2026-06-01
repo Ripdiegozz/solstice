@@ -1,14 +1,12 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::Style,
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Widget},
 };
 
-use crate::config::Config;
 use crate::events::Event;
-use crate::ui::clock::parse_color;
 
 /// Hit-test an upcoming events list: return the event index under y if any
 pub fn hit_test_upcoming(y: u16, rect: Rect, event_count: usize) -> Option<usize> {
@@ -30,14 +28,13 @@ pub fn hit_test_upcoming(y: u16, rect: Rect, event_count: usize) -> Option<usize
 /// Upcoming events panel
 pub struct UpcomingEventsWidget<'a> {
     events: &'a [Event],
-    config: &'a Config,
     focused: bool,
     selected_index: Option<usize>,
 }
 
 impl<'a> UpcomingEventsWidget<'a> {
-    pub fn new(events: &'a [Event], config: &'a Config) -> Self {
-        Self { events, config, focused: false, selected_index: None }
+    pub fn new(events: &'a [Event]) -> Self {
+        Self { events, focused: false, selected_index: None }
     }
 
     pub fn with_focused(mut self, focused: bool) -> Self {
@@ -53,22 +50,17 @@ impl<'a> UpcomingEventsWidget<'a> {
 
 impl<'a> Widget for UpcomingEventsWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let text_color = parse_color(&self.config.theme.text);
-        let muted = parse_color(&self.config.theme.muted);
-        let accent = parse_color(&self.config.theme.accent);
-        let surface = parse_color(&self.config.theme.surface);
-
         let block = Block::default()
             .title(" [3]-Upcoming ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(if self.focused { accent } else { surface }));
+            .border_style(Style::default().fg(if self.focused { Color::Magenta } else { Color::DarkGray }));
 
         if self.events.is_empty() {
             let empty_msg = Paragraph::new(vec![
                 Line::from(""),
                 Line::from(Span::styled(
                     "  No upcoming events",
-                    Style::default().fg(muted),
+                    Style::default().fg(Color::DarkGray),
                 )),
             ])
             .block(block);
@@ -86,9 +78,9 @@ impl<'a> Widget for UpcomingEventsWidget<'a> {
             };
 
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{} ", date_label), Style::default().fg(muted)),
-                Span::styled(time_label, Style::default().fg(accent)),
-                Span::styled(event.title.clone(), Style::default().fg(text_color)),
+                Span::styled(format!("{} ", date_label), Style::default().fg(Color::DarkGray)),
+                Span::styled(time_label, Style::default().fg(Color::Magenta)),
+                Span::styled(event.title.clone(), Style::default().fg(Color::White)),
             ]))
         }).collect();
 
@@ -141,7 +133,7 @@ mod tests {
             make_event(2, "Lunch", today, Some("12:00"), Some("13:00")),
         ];
 
-        let widget = UpcomingEventsWidget::new(&events, &config);
+        let widget = UpcomingEventsWidget::new(&events);
         let area = Rect::new(0, 0, 40, 8);
         let mut buf = Buffer::empty(area);
         widget.render(area, &mut buf);
@@ -159,7 +151,7 @@ mod tests {
             make_event(1, "Standup", date, Some("09:00"), Some("09:30")),
         ];
 
-        let widget = UpcomingEventsWidget::new(&events, &config);
+        let widget = UpcomingEventsWidget::new(&events);
         let area = Rect::new(0, 0, 40, 6);
         let mut buf = Buffer::empty(area);
         widget.render(area, &mut buf);
@@ -173,7 +165,7 @@ mod tests {
         let config = Config::default();
         let events: Vec<Event> = vec![];
 
-        let widget = UpcomingEventsWidget::new(&events, &config);
+        let widget = UpcomingEventsWidget::new(&events);
         let area = Rect::new(0, 0, 40, 6);
         let mut buf = Buffer::empty(area);
         widget.render(area, &mut buf);
@@ -189,7 +181,7 @@ mod tests {
             make_event(1, "All Day Event", date, None, None),
         ];
 
-        let widget = UpcomingEventsWidget::new(&events, &config);
+        let widget = UpcomingEventsWidget::new(&events);
         let area = Rect::new(0, 0, 40, 6);
         let mut buf = Buffer::empty(area);
         widget.render(area, &mut buf);
@@ -209,7 +201,7 @@ mod tests {
             make_event(2, "July Start", NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(), None, None),
         ];
 
-        let widget = UpcomingEventsWidget::new(&events, &config);
+        let widget = UpcomingEventsWidget::new(&events);
         let area = Rect::new(0, 0, 40, 8);
         let mut buf = Buffer::empty(area);
         widget.render(area, &mut buf);
@@ -227,7 +219,7 @@ mod tests {
             .map(|i| make_event(i as i64, &format!("Event {}", i), date, None, None))
             .collect();
 
-        let widget = UpcomingEventsWidget::new(&events, &config);
+        let widget = UpcomingEventsWidget::new(&events);
         // Area tall enough to show all items (inner height = 10)
         let area = Rect::new(0, 0, 50, 14);
         let mut buf = Buffer::empty(area);

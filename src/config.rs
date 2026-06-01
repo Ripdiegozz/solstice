@@ -17,59 +17,6 @@ pub fn data_dir() -> PathBuf {
         .join("solstice")
 }
 
-/// Theme color configuration (Catppuccin Mocha defaults)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ThemeColors {
-    /// Base background color (hex)
-    #[serde(default = "default_base")]
-    pub base: String,
-    /// Surface color for panels
-    #[serde(default = "default_surface0")]
-    pub surface: String,
-    /// Primary text color
-    #[serde(default = "default_text")]
-    pub text: String,
-    /// Accent/highlight color (mauve)
-    #[serde(default = "default_accent")]
-    pub accent: String,
-    /// Today highlight color (peach)
-    #[serde(default = "default_today")]
-    pub today: String,
-    /// Holiday marker color (red)
-    #[serde(default = "default_holiday")]
-    pub holiday: String,
-    /// Event dot color (green)
-    #[serde(default = "default_event")]
-    pub event: String,
-    /// Secondary text / muted (overlay0)
-    #[serde(default = "default_muted")]
-    pub muted: String,
-}
-
-fn default_base() -> String { "#1e1e2e".into() }
-fn default_surface0() -> String { "#313244".into() }
-fn default_text() -> String { "#cdd6f4".into() }
-fn default_accent() -> String { "#cba6f7".into() }
-fn default_today() -> String { "#fab387".into() }
-fn default_holiday() -> String { "#f38ba8".into() }
-fn default_event() -> String { "#a6e3a1".into() }
-fn default_muted() -> String { "#6c7086".into() }
-
-impl Default for ThemeColors {
-    fn default() -> Self {
-        Self {
-            base: default_base(),
-            surface: default_surface0(),
-            text: default_text(),
-            accent: default_accent(),
-            today: default_today(),
-            holiday: default_holiday(),
-            event: default_event(),
-            muted: default_muted(),
-        }
-    }
-}
-
 /// First day of the week
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -120,9 +67,6 @@ pub struct Config {
     #[serde(default)]
     pub gcal_client_secret: Option<String>,
 
-    /// Theme colors
-    #[serde(default)]
-    pub theme: ThemeColors,
 }
 
 fn default_timezone() -> String { "America/Bogota".into() }
@@ -143,7 +87,6 @@ impl Default for Config {
             calendarific_api_key: None,
             gcal_client_id: None,
             gcal_client_secret: None,
-            theme: ThemeColors::default(),
         }
     }
 }

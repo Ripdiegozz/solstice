@@ -1,14 +1,13 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Widget},
 };
 
 use crate::config::Config;
 use crate::events::Event;
-use crate::ui::clock::parse_color;
 
 /// Hit-test an event list: return the event index under y if any
 pub fn hit_test_event_list(y: u16, rect: Rect, event_count: usize) -> Option<usize> {
@@ -54,22 +53,17 @@ impl<'a> EventListWidget<'a> {
 
 impl<'a> Widget for EventListWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let _text_color = parse_color(&self.config.theme.text);
-        let muted = parse_color(&self.config.theme.muted);
-        let accent = parse_color(&self.config.theme.accent);
-        let surface = parse_color(&self.config.theme.surface);
-
         let block = Block::default()
             .title(" [2]-Events ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(if self.focused { accent } else { surface }));
+            .border_style(Style::default().fg(if self.focused { Color::Magenta } else { Color::DarkGray }));
 
         if self.events.is_empty() {
             let empty_msg = Paragraph::new(vec![
                 Line::from(""),
                 Line::from(Span::styled(
                     "  No events for this day",
-                    Style::default().fg(muted),
+                    Style::default().fg(Color::DarkGray),
                 )),
             ])
             .block(block);
@@ -94,17 +88,17 @@ impl<'a> Widget for EventListWidget<'a> {
 
             let style = if is_selected {
                 Style::default()
-                    .fg(accent)
-                    .bg(surface)
+                    .fg(Color::Magenta)
+                    .bg(Color::Reset)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
 
             ListItem::new(Line::from(vec![
-                Span::styled(time_label, if is_selected { Style::default().fg(accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(accent) }),
+                Span::styled(time_label, if is_selected { Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Magenta) }),
                 Span::styled(event.title.clone(), style),
-                Span::styled(source_marker, Style::default().fg(muted)),
+                Span::styled(source_marker, Style::default().fg(Color::DarkGray)),
             ]))
         }).collect();
 

@@ -2,7 +2,7 @@ use chrono::{Datelike, NaiveDate};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     widgets::{Block, Borders, Widget},
 };
 use std::collections::{HashMap, HashSet};
@@ -10,7 +10,6 @@ use std::collections::{HashMap, HashSet};
 use crate::app::App;
 use crate::calendar::grid::CalendarGrid;
 use crate::config::Config;
-use crate::ui::clock::parse_color;
 
 /// Hit-test a monthly calendar view: return the date under (x, y) if any
 pub fn hit_test_monthly(x: u16, y: u16, rect: Rect, app: &App) -> Option<NaiveDate> {
@@ -87,18 +86,10 @@ impl<'a> Widget for CalendarView<'a> {
         let weeks = grid.generate_cells(self.today, self.holidays, self.event_dates);
         let headers = grid.weekday_headers();
 
-        let text_color = parse_color(&self.config.theme.text);
-        let muted = parse_color(&self.config.theme.muted);
-        let accent = parse_color(&self.config.theme.accent);
-        let today_color = parse_color(&self.config.theme.today);
-        let holiday_color = parse_color(&self.config.theme.holiday);
-        let event_color = parse_color(&self.config.theme.event);
-        let surface = parse_color(&self.config.theme.surface);
-
         let block = Block::default()
             .title(" [1]-Calendar ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(if self.focused { accent } else { surface }));
+            .border_style(Style::default().fg(if self.focused { Color::Magenta } else { Color::DarkGray }));
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -111,7 +102,7 @@ impl<'a> Widget for CalendarView<'a> {
         let col_width = inner.width / 7;
         for (i, header) in headers.iter().enumerate() {
             let x = inner.x + (i as u16 * col_width);
-            let style = Style::default().fg(muted).add_modifier(Modifier::BOLD);
+            let style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD);
             buf.set_string(x, inner.y, header, style);
         }
 
@@ -132,18 +123,18 @@ impl<'a> Widget for CalendarView<'a> {
 
                 let style = if cell.is_today {
                     Style::default()
-                        .fg(today_color)
+                        .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
                 } else if cell.date == self.selected_date {
                     Style::default()
-                        .fg(accent)
+                        .fg(Color::Magenta)
                         .add_modifier(Modifier::BOLD)
                 } else if !cell.is_current_month {
-                    Style::default().fg(muted)
+                    Style::default().fg(Color::DarkGray)
                 } else if cell.is_holiday {
-                    Style::default().fg(holiday_color)
+                    Style::default().fg(Color::Red)
                 } else {
-                    Style::default().fg(text_color)
+                    Style::default().fg(Color::White)
                 };
 
                 buf.set_string(x, y, &day_str, style);
@@ -152,7 +143,7 @@ impl<'a> Widget for CalendarView<'a> {
                 if cell.has_events {
                     let dot_x = x + 3;
                     if dot_x < inner.x + inner.width {
-                        buf.set_string(dot_x, y, "•", Style::default().fg(event_color));
+                        buf.set_string(dot_x, y, "•", Style::default().fg(Color::Green));
                     }
                 }
             }
