@@ -15,3 +15,4 @@ pub mod config;
 pub mod events;
 pub mod gcal;
 pub mod ui;
+pub mod utils;

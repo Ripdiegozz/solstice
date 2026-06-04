@@ -70,6 +70,25 @@ pub struct EventStore {
     conn: Connection,
 }
 
+/// Parse "HH:MM" into (hour, minute). Returns None if invalid.
+pub fn parse_hhmm(s: &str) -> Option<(u8, u8)> {
+    if s.len() != 5 {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    if bytes[2] != b':' {
+        return None;
+    }
+    let h = (bytes[0] as char).to_digit(10)? as u8 * 10
+        + (bytes[1] as char).to_digit(10)? as u8;
+    let m = (bytes[3] as char).to_digit(10)? as u8 * 10
+        + (bytes[4] as char).to_digit(10)? as u8;
+    if h > 23 || m > 59 {
+        return None;
+    }
+    Some((h, m))
+}
+
 impl EventStore {
     /// Open or create the events database at ~/.local/share/solstice/events.db
     pub fn open() -> Result<Self> {
@@ -852,5 +871,57 @@ mod tests {
         for date in &dates {
             assert!(counts.contains_key(date), "counts should include date from dates_with_events");
         }
+    }
+
+    // ── parse_hhmm tests ──
+
+    #[test]
+    fn test_parse_hhmm_valid_standard() {
+        assert_eq!(parse_hhmm("09:00"), Some((9, 0)));
+    }
+
+    #[test]
+    fn test_parse_hhmm_valid_with_minutes() {
+        assert_eq!(parse_hhmm("09:30"), Some((9, 30)));
+    }
+
+    #[test]
+    fn test_parse_hhmm_valid_midnight() {
+        assert_eq!(parse_hhmm("00:00"), Some((0, 0)));
+    }
+
+    #[test]
+    fn test_parse_hhmm_valid_max() {
+        assert_eq!(parse_hhmm("23:59"), Some((23, 59)));
+    }
+
+    #[test]
+    fn test_parse_hhmm_invalid_hour_24() {
+        assert_eq!(parse_hhmm("24:00"), None);
+    }
+
+    #[test]
+    fn test_parse_hhmm_invalid_minute_60() {
+        assert_eq!(parse_hhmm("09:60"), None);
+    }
+
+    #[test]
+    fn test_parse_hhmm_invalid_no_colon() {
+        assert_eq!(parse_hhmm("0900"), None);
+    }
+
+    #[test]
+    fn test_parse_hhmm_invalid_empty() {
+        assert_eq!(parse_hhmm(""), None);
+    }
+
+    #[test]
+    fn test_parse_hhmm_invalid_not_zero_padded() {
+        assert_eq!(parse_hhmm("9:00"), None);
+    }
+
+    #[test]
+    fn test_parse_hhmm_invalid_garbage() {
+        assert_eq!(parse_hhmm("hello"), None);
     }
 }

@@ -231,6 +231,9 @@ pub struct App {
     pub event_detail: Option<crate::events::Event>,
     pub status_message: Option<String>,
 
+    // Weekly grid
+    pub selected_hour: u8,
+
     // Focus system
     pub focused_panel: FocusedPanel,
     pub selected_upcoming_index: Option<usize>,
@@ -293,6 +296,7 @@ impl App {
             status_message: None,
             focused_panel: FocusedPanel::Calendar,
             selected_upcoming_index: None,
+            selected_hour: 9,
             holiday_provider,
             event_store,
         })
@@ -328,6 +332,7 @@ impl App {
     /// Navigate to previous day
     pub fn prev_day(&mut self) {
         self.selected_date = self.selected_date.pred_opt().unwrap_or(self.selected_date);
+        self.snap_hour_if_weekly();
         self.refresh_selected_day();
 
         // Auto-navigate month if selected date moves to previous month
@@ -341,6 +346,7 @@ impl App {
     /// Navigate to next day
     pub fn next_day(&mut self) {
         self.selected_date = self.selected_date.succ_opt().unwrap_or(self.selected_date);
+        self.snap_hour_if_weekly();
         self.refresh_selected_day();
 
         // Auto-navigate month if selected date moves to next month
@@ -348,6 +354,26 @@ impl App {
             self.view_year = self.selected_date.year();
             self.view_month = self.selected_date.month();
             self.refresh_data();
+        }
+    }
+
+    /// Snap selected_hour to earliest timed event start when in weekly mode.
+    /// Preserves current hour if no timed events exist.
+    fn snap_hour_if_weekly(&mut self) {
+        if self.view_mode != ViewMode::Weekly {
+            return;
+        }
+        if let Some(ref store) = self.event_store {
+            if let Ok(events) = store.events_for_date(self.selected_date) {
+                let earliest = events.iter()
+                    .filter_map(|e| e.start_time.as_deref())
+                    .filter_map(crate::events::parse_hhmm)
+                    .map(|(h, _m)| h)
+                    .min();
+                if let Some(h) = earliest {
+                    self.selected_hour = h;
+                }
+            }
         }
     }
 
@@ -809,10 +835,45 @@ impl App {
                 match self.focused_panel {
                     FocusedPanel::Calendar => {
                         match key.code {
-                            KeyCode::Char('h') | KeyCode::Left => self.navigate_back(),
-                            KeyCode::Char('l') | KeyCode::Right => self.navigate_forward(),
-                            KeyCode::Char('k') | KeyCode::Up => self.prev_day(),
-                            KeyCode::Char('j') | KeyCode::Down => self.next_day(),
+                            KeyCode::Char('h') | KeyCode::Left => {
+                                if self.view_mode == ViewMode::Weekly {
+                                    let week_start = week_start_date(self.selected_date, self.config.first_day_of_week);
+                                    if self.selected_date > week_start {
+                                        self.selected_date = self.selected_date.pred_opt().unwrap_or(self.selected_date);
+                                        self.snap_hour_if_weekly();
+                                        self.refresh_selected_day();
+                                    }
+                                } else {
+                                    self.navigate_back();
+                                }
+                            }
+                            KeyCode::Char('l') | KeyCode::Right => {
+                                if self.view_mode == ViewMode::Weekly {
+                                    let week_start = week_start_date(self.selected_date, self.config.first_day_of_week);
+                                    let week_end = week_start + chrono::Duration::days(6);
+                                    if self.selected_date < week_end {
+                                        self.selected_date = self.selected_date.succ_opt().unwrap_or(self.selected_date);
+                                        self.snap_hour_if_weekly();
+                                        self.refresh_selected_day();
+                                    }
+                                } else {
+                                    self.navigate_forward();
+                                }
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                if self.view_mode == ViewMode::Weekly {
+                                    self.selected_hour = self.selected_hour.saturating_sub(1).max(6);
+                                } else {
+                                    self.prev_day();
+                                }
+                            }
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                if self.view_mode == ViewMode::Weekly {
+                                    self.selected_hour = (self.selected_hour + 1).min(21);
+                                } else {
+                                    self.next_day();
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -924,7 +985,22 @@ impl App {
                 // Calendar hit-test
                 if rects.calendar.contains(pos) {
                     self.focused_panel = FocusedPanel::Calendar;
-                    if let Some(date) = crate::ui::calendar_view::hit_test_monthly(
+                    if self.view_mode == ViewMode::Weekly {
+                        if let Some((date, hour)) = crate::ui::weekly_view::hit_test_weekly(
+                            mouse.column,
+                            mouse.row,
+                            rects.calendar,
+                            self,
+                        ) {
+                            self.selected_date = date;
+                            if let Some(h) = hour {
+                                self.selected_hour = h;
+                            }
+                            self.view_year = date.year();
+                            self.view_month = date.month();
+                            self.refresh_data();
+                        }
+                    } else if let Some(date) = crate::ui::calendar_view::hit_test_monthly(
                         mouse.column,
                         mouse.row,
                         rects.calendar,
@@ -1173,6 +1249,26 @@ mod tests {
     }
 
     // Weekly view tests
+    // ── selected_hour tests ──
+
+    #[test]
+    fn test_selected_hour_default_is_9() {
+        let app = make_test_app();
+        assert_eq!(app.selected_hour, 9);
+    }
+
+    #[test]
+    fn test_selected_hour_in_make_test_app_with_store_is_9() {
+        let app = make_test_app_with_store();
+        assert_eq!(app.selected_hour, 9);
+    }
+
+    #[test]
+    fn test_app_new_selected_hour_is_9() {
+        let app = App::new(Config::default()).unwrap();
+        assert_eq!(app.selected_hour, 9);
+    }
+
     #[test]
     fn test_view_mode_default_is_monthly() {
         let app = make_test_app();
@@ -1633,7 +1729,6 @@ mod tests {
         let mut app = make_test_app();
         assert_eq!(app.focused_panel, FocusedPanel::Calendar);
 
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         // Simulate what main.rs does
         app.focus_panel(2);
         assert_eq!(app.focused_panel, FocusedPanel::EventList);
@@ -1663,6 +1758,7 @@ mod tests {
             status_message: None,
             focused_panel: FocusedPanel::Calendar,
             selected_upcoming_index: None,
+            selected_hour: 9,
             holiday_provider: Box::new(crate::calendar::holidays::LocalFileProvider::new()),
             event_store: None,
         }
@@ -1693,6 +1789,7 @@ mod tests {
             status_message: None,
             focused_panel: FocusedPanel::Calendar,
             selected_upcoming_index: None,
+            selected_hour: 9,
             holiday_provider: Box::new(crate::calendar::holidays::LocalFileProvider::new()),
             event_store: Some(store),
         }
@@ -1850,6 +1947,185 @@ mod tests {
         let deleted = app.delete_selected_event();
         assert!(deleted);
         assert_eq!(app.selected_event_index, None, "Selection should reset after deleting last event");
+    }
+
+    // ── weekly navigation tests ──
+
+    #[test]
+    fn test_prev_day_weekly_snaps_hour_to_earliest_event() {
+        let mut app = make_test_app_with_store();
+        let tue = NaiveDate::from_ymd_opt(2026, 6, 16).unwrap();
+        let wed = NaiveDate::from_ymd_opt(2026, 6, 17).unwrap();
+
+        // Add events to Tuesday: 14:00 and 10:00
+        {
+            let store = app.event_store.as_ref().unwrap();
+            store.add_event("Late", tue, Some("14:00"), Some("15:00")).unwrap();
+            store.add_event("Early", tue, Some("10:00"), Some("11:00")).unwrap();
+        }
+
+        app.view_mode = ViewMode::Weekly;
+        app.selected_date = wed;
+        app.selected_hour = 9;
+        app.focused_panel = FocusedPanel::Calendar;
+        // Pre-populate week_events so refresh_data snap can find events
+        app.refresh_data();
+
+        app.prev_day();
+        // Should have moved to Tuesday and snapped to 10:00 (earliest event)
+        assert_eq!(app.selected_date, tue);
+        assert_eq!(app.selected_hour, 10);
+    }
+
+    #[test]
+    fn test_next_day_weekly_preserves_hour_when_no_events() {
+        let mut app = make_test_app();
+        app.view_mode = ViewMode::Weekly;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        app.selected_hour = 14;
+
+        app.next_day();
+        assert_eq!(app.selected_date, NaiveDate::from_ymd_opt(2026, 6, 16).unwrap());
+        assert_eq!(app.selected_hour, 14, "Hour should be preserved when no events on new day");
+    }
+
+    #[test]
+    fn test_handle_normal_key_weekly_h_moves_day_back_within_week() {
+        let mut app = make_test_app();
+        app.view_mode = ViewMode::Weekly;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 17).unwrap(); // Wednesday
+        app.focused_panel = FocusedPanel::Calendar;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        assert_eq!(app.selected_date, NaiveDate::from_ymd_opt(2026, 6, 16).unwrap());
+    }
+
+    #[test]
+    fn test_handle_normal_key_weekly_l_moves_day_forward_within_week() {
+        let mut app = make_test_app();
+        app.view_mode = ViewMode::Weekly;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 17).unwrap(); // Wednesday
+        app.focused_panel = FocusedPanel::Calendar;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        assert_eq!(app.selected_date, NaiveDate::from_ymd_opt(2026, 6, 18).unwrap());
+    }
+
+    #[test]
+    fn test_handle_normal_key_weekly_j_moves_hour_down() {
+        let mut app = make_test_app();
+        app.view_mode = ViewMode::Weekly;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 17).unwrap();
+        app.selected_hour = 9;
+        app.focused_panel = FocusedPanel::Calendar;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert_eq!(app.selected_hour, 10);
+    }
+
+    #[test]
+    fn test_handle_normal_key_weekly_k_moves_hour_up() {
+        let mut app = make_test_app();
+        app.view_mode = ViewMode::Weekly;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 17).unwrap();
+        app.selected_hour = 9;
+        app.focused_panel = FocusedPanel::Calendar;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+        assert_eq!(app.selected_hour, 8);
+    }
+
+    #[test]
+    fn test_handle_normal_key_weekly_k_clamped_at_6() {
+        let mut app = make_test_app();
+        app.view_mode = ViewMode::Weekly;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 17).unwrap();
+        app.selected_hour = 6;
+        app.focused_panel = FocusedPanel::Calendar;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+        assert_eq!(app.selected_hour, 6, "Should clamp at 6");
+    }
+
+    #[test]
+    fn test_handle_normal_key_weekly_j_clamped_at_21() {
+        let mut app = make_test_app();
+        app.view_mode = ViewMode::Weekly;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 17).unwrap();
+        app.selected_hour = 21;
+        app.focused_panel = FocusedPanel::Calendar;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert_eq!(app.selected_hour, 21, "Should clamp at 21");
+    }
+
+    #[test]
+    fn test_handle_normal_key_weekly_h_clamped_at_week_start() {
+        let mut app = make_test_app();
+        app.view_mode = ViewMode::Weekly;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 14).unwrap(); // Sunday (week start)
+        app.focused_panel = FocusedPanel::Calendar;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        assert_eq!(app.selected_date, NaiveDate::from_ymd_opt(2026, 6, 14).unwrap(), "Should not move before week start");
+    }
+
+    #[test]
+    fn test_handle_normal_key_weekly_l_clamped_at_week_end() {
+        let mut app = make_test_app();
+        app.view_mode = ViewMode::Weekly;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 20).unwrap(); // Saturday (week end)
+        app.focused_panel = FocusedPanel::Calendar;
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        assert_eq!(app.selected_date, NaiveDate::from_ymd_opt(2026, 6, 20).unwrap(), "Should not move after week end");
+    }
+
+    #[test]
+    fn test_handle_normal_key_weekly_h_snaps_to_earliest_event() {
+        let mut app = make_test_app_with_store();
+        app.view_mode = ViewMode::Weekly;
+        // Week of June 14-20, 2026. Wednesday = June 17.
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 17).unwrap();
+        app.selected_hour = 14;
+        app.focused_panel = FocusedPanel::Calendar;
+
+        // Add an event on Tuesday June 16 at 08:00
+        let tuesday = NaiveDate::from_ymd_opt(2026, 6, 16).unwrap();
+        app.event_store.as_ref().unwrap().add_event("Morning", tuesday, Some("08:00"), Some("09:00")).unwrap();
+        app.refresh_data();
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        assert_eq!(app.selected_date, tuesday);
+        assert_eq!(app.selected_hour, 8, "Should snap to earliest event start on new day");
+    }
+
+    #[test]
+    fn test_handle_normal_key_weekly_l_snaps_to_earliest_event() {
+        let mut app = make_test_app_with_store();
+        app.view_mode = ViewMode::Weekly;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 17).unwrap(); // Wednesday
+        app.selected_hour = 14;
+        app.focused_panel = FocusedPanel::Calendar;
+
+        // Add an event on Thursday June 18 at 10:00
+        let thursday = NaiveDate::from_ymd_opt(2026, 6, 18).unwrap();
+        app.event_store.as_ref().unwrap().add_event("Late", thursday, Some("10:00"), Some("11:00")).unwrap();
+        app.refresh_data();
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        app.handle_normal_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        assert_eq!(app.selected_date, thursday);
+        assert_eq!(app.selected_hour, 10, "Should snap to earliest event start on new day");
     }
 
     #[test]

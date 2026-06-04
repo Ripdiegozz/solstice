@@ -191,6 +191,7 @@ pub fn draw_ui(f: &mut Frame, app: &App) {
                 &app.holidays,
                 &app.week_events,
                 &app.config,
+                app.selected_hour,
             ).with_focused(calendar_focused);
             f.render_widget(weekly, content_chunks[0]);
         }
