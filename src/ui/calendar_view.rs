@@ -11,7 +11,7 @@ use crate::app::App;
 use crate::calendar::grid::CalendarGrid;
 use crate::config::Config;
 
-/// Height of each calendar cell in rows (2 lines: day number + event count)
+/// Height of each calendar cell in rows (2 lines: day number + optional indicators)
 pub(crate) const CELL_HEIGHT: u16 = 2;
 
 /// Hit-test a monthly calendar view: return the date under (x, y) if any
@@ -140,16 +140,14 @@ impl<'a> Widget for CalendarView<'a> {
                     Style::default().fg(Color::White)
                 };
 
-                // Line 1: day number
+                // Line 1: day number + optional event indicator on the same line
                 buf.set_string(x, week_y, &day_str, style);
 
-                // Line 2: event count (green) when col_width >= 2 and count > 0
-                if col_width >= 2 && cell.event_count > 0 {
-                    let line2_y = week_y + 1;
-                    if line2_y < inner.y + inner.height {
-                        let count_str = format!("{}", cell.event_count);
-                        buf.set_string(x, line2_y, &count_str, Style::default().fg(Color::Green));
-                    }
+                let ind_x = x + day_str.len() as u16;
+
+                // Event indicator (green dot)
+                if cell.event_count > 0 && ind_x < inner.x + inner.width {
+                    buf.set_string(ind_x, week_y, "\u{2022}", Style::default().fg(Color::Green));
                 }
             }
         }
@@ -208,18 +206,50 @@ mod tests {
 
     // ── rendering tests (tasks 4.4, 4.6) ──
 
-    fn make_test_event_counts() -> HashMap<NaiveDate, usize> {
-        let mut counts = HashMap::new();
-        counts.insert(NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(), 3);
-        counts.insert(NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(), 12);
-        counts
+    fn make_test_holidays() -> HashMap<NaiveDate, String> {
+        let mut holidays = HashMap::new();
+        holidays.insert(NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(), "Some Holiday".into());
+        holidays.insert(NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(), "Another Holiday".into());
+        holidays
     }
 
     #[test]
-    fn test_render_shows_event_count_in_green() {
+    fn test_render_holiday_day_is_red() {
+        let config = Config::default();
+        let holidays = make_test_holidays();
+        let event_counts = HashMap::new();
+
+        // Use June 2 as selected/today so June 15 is not "today" (today gets Yellow priority)
+        let view = CalendarView::new(
+            2026, 6,
+            NaiveDate::from_ymd_opt(2026, 6, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 6, 2).unwrap(),
+            &holidays,
+            &event_counts,
+            &config,
+        );
+
+        let area = Rect::new(0, 0, 40, 20);
+        let mut buf = Buffer::empty(area);
+        view.render(area, &mut buf);
+
+        // June 15 is a holiday (and not today) — verify the day number is rendered in red
+        // June 15 (Monday, col=1 with Sunday start), week 2 starts at y=3+4=7
+        // day_str = "15" (2 chars), x=6
+        let cell_fg_15 = buf.cell((7, 7)).map(|c| c.fg);
+        assert_eq!(cell_fg_15, Some(Color::Red), "June 15 day number should be red for holiday");
+
+        // Verify no extra indicator after the day number
+        let after_day = buf.cell((8, 7)).map(|c| c.symbol().to_string()).unwrap_or_default();
+        assert_eq!(after_day, " ", "Holiday should not show extra indicator, just red color");
+    }
+
+    #[test]
+    fn test_render_shows_event_indicator() {
         let config = Config::default();
         let holidays = HashMap::new();
-        let event_counts = make_test_event_counts();
+        let mut event_counts = HashMap::new();
+        event_counts.insert(NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(), 3);
 
         let view = CalendarView::new(
             2026, 6,
@@ -230,32 +260,55 @@ mod tests {
             &config,
         );
 
-        // Wide enough for 2-line cells (col_width = 37/7 = 5 >= 2)
         let area = Rect::new(0, 0, 40, 20);
         let mut buf = Buffer::empty(area);
         view.render(area, &mut buf);
 
-        // Verify count "3" appears on line 2 of June 1 cell
-        // June 1 (Monday, col=1 with Sunday start), header at y=1, week 0 starts at y=3
-        // line1_y=3, line2_y=4, x=inner.x + 1*5 = 1+5=6
-        let cell_content_3 = buf.cell((6, 4)).map(|c| c.symbol().to_string()).unwrap_or_default();
-        assert_eq!(cell_content_3, "3", "June 1 line 2 should show '3'");
-
-        // Verify count "12" appears on line 2 of June 15 cell
-        // June 15 (Monday, col=1 with Sunday start), week 2 starts at y=3+4=7
-        // line1_y=7, line2_y=8, x=6
-        let cell_content_12 = buf.cell((6, 8)).map(|c| c.symbol().to_string()).unwrap_or_default();
-        assert_eq!(cell_content_12, "1", "June 15 line 2 should show '12' (first char)");
-        // "2" should be at x=7
-        let cell_12_digit2 = buf.cell((7, 8)).map(|c| c.symbol().to_string()).unwrap_or_default();
-        assert_eq!(cell_12_digit2, "2", "June 15 line 2 second char should be '2'");
+        // June 1: day_str = " 1" (2 chars), x=6, indicator at x=8, y=3
+        let cell_content = buf.cell((8, 3)).map(|c| c.symbol().to_string()).unwrap_or_default();
+        assert_eq!(cell_content, "\u{2022}", "June 1 should show event indicator after day number");
     }
 
     #[test]
-    fn test_render_day_without_events_is_blank_on_line2() {
+    fn test_render_holiday_and_event_shows_red_day_with_green_dot() {
         let config = Config::default();
-        let holidays = HashMap::new();
-        let event_counts = make_test_event_counts(); // only Jun 1 and Jun 15 have events
+        let holidays = make_test_holidays(); // Jun 15 is a holiday
+        let mut event_counts = HashMap::new();
+        event_counts.insert(NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(), 3);
+
+        // Use June 2 as selected/today so June 15 is not "today" (today gets Yellow priority)
+        let view = CalendarView::new(
+            2026, 6,
+            NaiveDate::from_ymd_opt(2026, 6, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 6, 2).unwrap(),
+            &holidays,
+            &event_counts,
+            &config,
+        );
+
+        let area = Rect::new(0, 0, 40, 20);
+        let mut buf = Buffer::empty(area);
+        view.render(area, &mut buf);
+
+        // June 15: day_str = "15" (2 chars), x=6
+        // Day number should be in red (holiday, and not today)
+        let day_fg = buf.cell((7, 7)).map(|c| c.fg);
+        assert_eq!(day_fg, Some(Color::Red), "June 15 day number should be red for holiday");
+
+        // Only one indicator: green dot for event at x=8
+        let event_indicator = buf.cell((8, 7)).map(|c| c.symbol().to_string()).unwrap_or_default();
+        assert_eq!(event_indicator, "\u{2022}", "June 15 should show green event indicator");
+
+        // x=9 should be blank (no second indicator)
+        let after_indicator = buf.cell((9, 7)).map(|c| c.symbol().to_string()).unwrap_or_default();
+        assert_eq!(after_indicator, " ", "No second indicator after event dot");
+    }
+
+    #[test]
+    fn test_render_line2_is_always_blank() {
+        let config = Config::default();
+        let holidays = make_test_holidays(); // only Jun 1 and Jun 15 are holidays
+        let event_counts = HashMap::new();
 
         let view = CalendarView::new(
             2026, 6,
@@ -271,16 +324,16 @@ mod tests {
         view.render(area, &mut buf);
 
         // June 8 (Monday, col=1 with Sunday start), week 1 starts at y=3+2=5
-        // line1_y=5, line2_y=6, x=6  — should be blank (0 events)
+        // line2_y=6, x=6  — line 2 should always be blank now
         let cell_line2 = buf.cell((6, 6)).map(|c| c.symbol().to_string()).unwrap_or_default();
-        assert_eq!(cell_line2, " ", "June 8 line 2 should be blank (0 events)");
+        assert_eq!(cell_line2, " ", "Line 2 should be blank since indicators moved to line 1");
     }
 
     #[test]
-    fn test_render_skips_count_line_when_narrow() {
+    fn test_render_line2_is_blank_when_narrow() {
         let config = Config::default();
-        let holidays = HashMap::new();
-        let event_counts = make_test_event_counts();
+        let holidays = make_test_holidays();
+        let event_counts = HashMap::new();
 
         let view = CalendarView::new(
             2026, 6,
@@ -296,13 +349,12 @@ mod tests {
         let mut buf = Buffer::empty(area);
         view.render(area, &mut buf);
 
-        // col_width < 2, so count line should never render
         // Scan all cells in the buffer for any non-space content on line 2 positions
         // (week rows y >= inner.y+2, and (y - (inner.y+2)) % 2 == 1 means line 2)
         let inner = ratatui::widgets::Block::default()
             .borders(ratatui::widgets::Borders::ALL)
             .inner(area);
-        let has_count_on_line2 = (inner.y + 2..inner.y + inner.height).any(|y| {
+        let has_content_on_line2 = (inner.y + 2..inner.y + inner.height).any(|y| {
             if (y - (inner.y + 2)) % CELL_HEIGHT != 1 {
                 return false; // line 1, not line 2
             }
@@ -310,6 +362,6 @@ mod tests {
                 buf.cell((x, y)).map(|c| c.symbol() != " ").unwrap_or(false)
             })
         });
-        assert!(!has_count_on_line2, "Narrow column should skip all line 2 content");
+        assert!(!has_content_on_line2, "Line 2 should be blank even when narrow");
     }
 }
