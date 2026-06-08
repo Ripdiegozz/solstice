@@ -9,11 +9,18 @@ use crate::config::Config;
 use crate::events::{Event, EventSource, EventStore, Recurrence};
 use crate::ui::text_input::TextInput;
 
-/// Modal mode: create or edit
+/// Modal mode: create, edit, or holiday settings
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModalMode {
     Create,
     Edit,
+    Settings,
+}
+
+/// Settings tab within the Settings modal
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SettingsTab {
+    Holidays,
 }
 
 /// View mode for the calendar
@@ -48,6 +55,8 @@ pub struct ModalState {
     pub fields: Vec<FormField>,
     pub focused_field: usize,
     pub error_message: Option<String>,
+    pub settings_tab: Option<SettingsTab>,
+    all_settings_fields: Vec<Vec<FormField>>,
 }
 
 impl ModalState {
@@ -68,6 +77,8 @@ impl ModalState {
             fields,
             focused_field: 0,
             error_message: None,
+            settings_tab: None,
+            all_settings_fields: vec![],
         }
     }
 
@@ -93,11 +104,45 @@ impl ModalState {
             fields,
             focused_field: 0,
             error_message: None,
+            settings_tab: None,
+            all_settings_fields: vec![],
+        }
+    }
+
+    /// Create a settings modal for configuring holiday API key and country.
+    pub fn new_settings(config: &Config) -> Self {
+        let api_key = config.calendarific_api_key.as_deref().unwrap_or("");
+        let holidays_fields = vec![
+            FormField { label: "Calendarific API Key", input: TextInput::with_value(api_key, 100) },
+            FormField { label: "Country Code (e.g. CO, US)", input: TextInput::with_value(&config.country_code, 2) },
+        ];
+        let all_settings_fields = vec![holidays_fields.clone()];
+        Self {
+            mode: ModalMode::Settings,
+            event_id: None,
+            fields: holidays_fields,
+            focused_field: 0,
+            error_message: None,
+            settings_tab: Some(SettingsTab::Holidays),
+            all_settings_fields,
         }
     }
 
     /// Validate all fields. Returns Ok(()) if valid, Err(message) if invalid.
     pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.mode == ModalMode::Settings {
+            match self.settings_tab {
+                Some(SettingsTab::Holidays) => {
+                    let country = self.fields[1].input.value().trim();
+                    if country.is_empty() {
+                        return Err("Country code is required".to_string());
+                    }
+                    return Ok(());
+                }
+                None => return Ok(()),
+            }
+        }
+
         // Title required
         let title = self.fields[0].input.value().trim();
         if title.is_empty() {
@@ -184,6 +229,73 @@ impl ModalState {
             self.focused_field -= 1;
         }
     }
+
+    /// Save the current tab's fields into the backup
+    pub fn save_current_tab_fields(&mut self) {
+        if let Some(tab) = self.settings_tab {
+            let idx = tab.index();
+            if idx < self.all_settings_fields.len() {
+                self.all_settings_fields[idx] = self.fields.clone();
+            }
+        }
+    }
+
+    /// Cycle to the next settings tab (wraps)
+    pub fn next_tab(&mut self) {
+        if self.mode != ModalMode::Settings {
+            return;
+        }
+        let current_tab = match self.settings_tab {
+            Some(t) => t,
+            None => return,
+        };
+        let current_idx = current_tab.index();
+        if current_idx < self.all_settings_fields.len() {
+            self.all_settings_fields[current_idx] = self.fields.clone();
+        }
+        let next_idx = (current_idx + 1) % self.all_settings_fields.len();
+        self.settings_tab = SettingsTab::from_index(next_idx);
+        self.fields = self.all_settings_fields[next_idx].clone();
+        self.focused_field = 0;
+    }
+
+    /// Cycle to the previous settings tab (wraps)
+    pub fn prev_tab(&mut self) {
+        if self.mode != ModalMode::Settings {
+            return;
+        }
+        let current_tab = match self.settings_tab {
+            Some(t) => t,
+            None => return,
+        };
+        let current_idx = current_tab.index();
+        if current_idx < self.all_settings_fields.len() {
+            self.all_settings_fields[current_idx] = self.fields.clone();
+        }
+        let prev_idx = if current_idx == 0 {
+            self.all_settings_fields.len() - 1
+        } else {
+            current_idx - 1
+        };
+        self.settings_tab = SettingsTab::from_index(prev_idx);
+        self.fields = self.all_settings_fields[prev_idx].clone();
+        self.focused_field = 0;
+    }
+}
+
+impl SettingsTab {
+    fn index(&self) -> usize {
+        match self {
+            SettingsTab::Holidays => 0,
+        }
+    }
+
+    fn from_index(idx: usize) -> Option<Self> {
+        match idx {
+            0 => Some(SettingsTab::Holidays),
+            _ => None,
+        }
+    }
 }
 
 /// Parse a time string in HH:MM format
@@ -254,7 +366,13 @@ impl App {
         let holiday_provider = holidays::create_provider(
             config.calendarific_api_key.as_deref(),
         );
-        let holidays = holiday_provider.load(&config.country_code, today.year())?;
+
+        // First-time fetch: if no cache exists, force a refresh to populate it
+        let holidays = if holiday_provider.has_cache(&config.country_code, today.year()) {
+            holiday_provider.load(&config.country_code, today.year())?
+        } else {
+            holiday_provider.refresh(&config.country_code, today.year())?
+        };
 
         // Try to open event store (non-fatal if it fails)
         let event_store = EventStore::open().ok();
@@ -505,6 +623,11 @@ impl App {
         true
     }
 
+    /// Open the holiday settings modal.
+    pub fn open_settings_modal(&mut self) {
+        self.modal = Some(ModalState::new_settings(&self.config));
+    }
+
     /// Select the next event in the list
     pub fn select_next_event(&mut self) {
         if self.selected_day_events.is_empty() {
@@ -588,8 +711,15 @@ impl App {
         }
     }
 
-    /// Save the modal form data (create or update event)
+    /// Save the modal form data (create, update event, or holiday settings)
     pub fn save_modal(&mut self) -> bool {
+        // Save current tab fields first into all_settings_fields
+        if let Some(ref mut modal) = self.modal {
+            if modal.mode == ModalMode::Settings {
+                modal.save_current_tab_fields();
+            }
+        }
+
         let modal = match &self.modal {
             Some(m) => m.clone(),
             None => return false,
@@ -599,6 +729,44 @@ impl App {
         if let Err(msg) = modal.validate() {
             if let Some(ref mut m) = self.modal {
                 m.error_message = Some(msg);
+            }
+            return false;
+        }
+
+        // Handle Settings mode: save API key + country, refresh provider & fetch
+        if modal.mode == ModalMode::Settings {
+            // Process ALL tabs - for now, only Holidays
+            let holidays_fields = &modal.all_settings_fields[0];
+            let api_key = holidays_fields[0].input.value().trim().to_string();
+            let country_code = holidays_fields[1].input.value().trim().to_string();
+
+            self.config.calendarific_api_key = if api_key.is_empty() { None } else { Some(api_key.clone()) };
+            self.config.country_code = country_code.clone();
+
+            if let Err(e) = self.config.save() {
+                if let Some(ref mut m) = self.modal {
+                    m.error_message = Some(format!("Failed to save config: {}", e));
+                }
+                return false;
+            }
+
+            // Recreate provider with new API key
+            self.holiday_provider = holidays::create_provider(self.config.calendarific_api_key.as_deref());
+
+            self.status_message = Some("Fetching holidays...".to_string());
+            match self.holiday_provider.refresh(&country_code, self.view_year) {
+                Ok(holidays) => {
+                    let count = holidays.len();
+                    self.holidays = holidays;
+                    self.modal = None;
+                    self.status_message = Some(format!("Holidays refreshed: {} loaded", count));
+                    return true;
+                }
+                Err(e) => {
+                    if let Some(ref mut m) = self.modal {
+                        m.error_message = Some(format!("Fetch failed: {}", e));
+                    }
+                }
             }
             return false;
         }
@@ -640,6 +808,7 @@ impl App {
                         Ok(())
                     }
                 }
+                ModalMode::Settings => unreachable!(),
             };
 
             match result {
@@ -649,6 +818,7 @@ impl App {
                     self.status_message = Some(match modal.mode {
                         ModalMode::Create => "Event created".to_string(),
                         ModalMode::Edit => "Event updated".to_string(),
+                        ModalMode::Settings => unreachable!(),
                     });
                     return true;
                 }
@@ -694,6 +864,10 @@ impl App {
                 }
                 return true;
             }
+            KeyCode::Char('t') if modal.mode == ModalMode::Settings => {
+                modal.next_tab();
+                return true;
+            }
             KeyCode::Backspace => {
                 let field_idx = modal.focused_field;
                 modal.fields[field_idx].input.delete_backward();
@@ -719,7 +893,7 @@ impl App {
                 modal.fields[field_idx].input.move_cursor_end();
                 return true;
             }
-            KeyCode::Char(' ') if modal.focused_field == 5 => {
+            KeyCode::Char(' ') if modal.mode != crate::app::ModalMode::Settings && modal.focused_field == 5 => {
                 modal.cycle_recurrence();
                 return true;
             }
@@ -819,11 +993,27 @@ impl App {
             KeyCode::Char('e') => {
                 self.open_edit_modal();
             }
+            KeyCode::Char('c') => {
+                self.open_settings_modal();
+            }
             KeyCode::Char('d') => {
                 if self.selected_event_index.is_some() {
                     self.confirm_delete = true;
                 } else {
                     self.status_message = Some("No event selected".to_string());
+                }
+            }
+            KeyCode::Char('H') => {
+                self.status_message = Some("Refreshing holidays...".to_string());
+                match self.holiday_provider.refresh(&self.config.country_code, self.view_year) {
+                    Ok(holidays) => {
+                        let count = holidays.len();
+                        self.holidays = holidays;
+                        self.status_message = Some(format!("Holidays refreshed: {} loaded", count));
+                    }
+                    Err(e) => {
+                        self.status_message = Some(format!("Holiday refresh failed: {}", e));
+                    }
                 }
             }
             KeyCode::Char('1') => self.focus_panel(1),
@@ -2357,5 +2547,40 @@ mod tests {
         };
         app.handle_mouse(hover, Some(&rects));
         assert_eq!(app.focused_panel, FocusedPanel::Calendar, "Hover should NOT change focus");
+    }
+
+    #[test]
+    fn test_settings_modal_opens_with_holidays_tab() {
+        let config = Config::default();
+        let modal = ModalState::new_settings(&config);
+        assert_eq!(modal.mode, ModalMode::Settings);
+        assert_eq!(modal.settings_tab, Some(SettingsTab::Holidays));
+        assert_eq!(modal.fields.len(), 2);
+        assert_eq!(modal.fields[0].label, "Calendarific API Key");
+        assert_eq!(modal.fields[1].label, "Country Code (e.g. CO, US)");
+    }
+
+    #[test]
+    fn test_settings_modal_tab_switches_fields() {
+        let config = Config::default();
+        let mut modal = ModalState::new_settings(&config);
+        assert_eq!(modal.settings_tab, Some(SettingsTab::Holidays));
+        assert_eq!(modal.fields[0].input.value(), "");
+
+        // Move focus to the second field and edit it
+        modal.focused_field = 1;
+        modal.fields[1].input = TextInput::with_value("edited-country", 2);
+        assert_eq!(modal.fields[1].input.value(), "edited-country");
+
+        // next_tab should save current fields into backup, switch tab, and restore from backup
+        modal.next_tab();
+        // With only one tab, it cycles back to Holidays and restores from backup
+        assert_eq!(modal.settings_tab, Some(SettingsTab::Holidays));
+        assert_eq!(modal.focused_field, 0, "Focus should reset to 0 after tab switch");
+
+        // Verify the backup was updated: prev_tab should restore the edited value back
+        modal.prev_tab();
+        assert_eq!(modal.fields[1].input.value(), "edited-country", "Backup should preserve edited value");
+        assert_eq!(modal.focused_field, 0, "Focus should reset to 0 after tab switch");
     }
 }

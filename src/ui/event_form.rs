@@ -64,6 +64,7 @@ pub fn render_modal(modal: &ModalState, _config: &Config, area: Rect, buf: &mut 
     let title = match modal.mode {
         crate::app::ModalMode::Create => " New Event ",
         crate::app::ModalMode::Edit => " Edit Event ",
+        crate::app::ModalMode::Settings => " Holiday Settings ",
     };
 
     let block = Block::default()
@@ -78,6 +79,25 @@ pub fn render_modal(modal: &ModalState, _config: &Config, area: Rect, buf: &mut 
         return;
     }
 
+    // Settings tab bar
+    let mut tab_offset = 0u16;
+    if modal.mode == crate::app::ModalMode::Settings {
+        if let Some(ref _tab) = modal.settings_tab {
+            let active_style = Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD);
+            let inactive_style = Style::default().fg(Color::DarkGray);
+
+            // For now, only Holidays tab exists; render it active
+            let tab_text = " [ Holidays ] ";
+            buf.set_string(inner.x, inner.y, tab_text, active_style);
+
+            // Separator line
+            let separator = "─".repeat(inner.width as usize);
+            buf.set_string(inner.x, inner.y + 1, separator, inactive_style);
+
+            tab_offset = 2;
+        }
+    }
+
     // Render fields
     let field_count = modal.fields.len();
     let field_height = 3u16; // Each field: label + input + spacing
@@ -85,11 +105,11 @@ pub fn render_modal(modal: &ModalState, _config: &Config, area: Rect, buf: &mut 
 
     // Reserve space for error message and footer
     let footer_height = 3u16;
-    let available = inner.height.saturating_sub(footer_height);
+    let available = inner.height.saturating_sub(footer_height + tab_offset);
 
     for (i, field) in modal.fields.iter().enumerate() {
-        let field_y = inner.y + (i as u16 * field_height);
-        if field_y + field_height > inner.y + available {
+        let field_y = inner.y + tab_offset + (i as u16 * field_height);
+        if field_y + field_height > inner.y + tab_offset + available {
             break;
         }
 
@@ -127,14 +147,27 @@ pub fn render_modal(modal: &ModalState, _config: &Config, area: Rect, buf: &mut 
     // Footer hints
     let footer_y = inner.y + inner.height.saturating_sub(1);
     let footer_area = Rect::new(inner.x, footer_y, inner.width, 1);
-    let hints = Line::from(vec![
-        Span::styled("Tab", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
-        Span::styled(" navigate ", Style::default().fg(Color::DarkGray)),
-        Span::styled("Enter", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
-        Span::styled(" save ", Style::default().fg(Color::DarkGray)),
-        Span::styled("Esc", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
-        Span::styled(" cancel ", Style::default().fg(Color::DarkGray)),
-    ]);
+    let hints = if modal.mode == crate::app::ModalMode::Settings {
+        Line::from(vec![
+            Span::styled("t", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled(" next tab ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Tab", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled(" navigate ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Enter", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled(" save & fetch ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Esc", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled(" cancel ", Style::default().fg(Color::DarkGray)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("Tab", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled(" navigate ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Enter", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled(" save ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Esc", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled(" cancel ", Style::default().fg(Color::DarkGray)),
+        ])
+    };
     Paragraph::new(hints).render(footer_area, buf);
 }
 

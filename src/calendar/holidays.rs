@@ -33,6 +33,14 @@ pub trait HolidayProvider {
     /// Load holidays for a given country and year.
     /// Returns a map of date -> holiday name.
     fn load(&self, country_code: &str, year: i32) -> Result<HashMap<NaiveDate, String>>;
+
+    /// Force refresh: bypass cache and fetch fresh data from the source.
+    /// For API-backed providers this clears the cache and re-fetches.
+    /// For file-backed providers this is equivalent to load.
+    fn refresh(&self, country_code: &str, year: i32) -> Result<HashMap<NaiveDate, String>>;
+
+    /// Check if cached data exists for a given country+year.
+    fn has_cache(&self, country_code: &str, year: i32) -> bool;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +107,16 @@ impl HolidayProvider for LocalFileProvider {
         }
 
         Ok(holidays)
+    }
+
+    fn refresh(&self, country_code: &str, year: i32) -> Result<HashMap<NaiveDate, String>> {
+        // Local files don't cache; refresh is the same as load
+        self.load(country_code, year)
+    }
+
+    fn has_cache(&self, country_code: &str, _year: i32) -> bool {
+        let file_path = self.assets_dir.join(format!("{}.json", country_code.to_uppercase()));
+        file_path.exists()
     }
 }
 
@@ -281,6 +299,34 @@ impl HolidayProvider for CalendarificProvider {
             }
         }
     }
+
+    fn refresh(&self, country_code: &str, year: i32) -> Result<HashMap<NaiveDate, String>> {
+        let cache_path = self.cache_path(country_code, year);
+
+        // Delete existing cache to force a fresh fetch
+        if cache_path.exists() {
+            let _ = fs::remove_file(&cache_path);
+        }
+
+        // Fetch from API and cache
+        let holidays = self.fetch_from_api(country_code, year)?;
+        let _ = self.write_cache(&cache_path, &holidays);
+
+        let mut map = HashMap::new();
+        for h in &holidays {
+            if let Ok(date) = NaiveDate::parse_from_str(&h.date, "%Y-%m-%d") {
+                if date.year() == year {
+                    map.insert(date, h.name.clone());
+                }
+            }
+        }
+        Ok(map)
+    }
+
+    fn has_cache(&self, country_code: &str, year: i32) -> bool {
+        let cache_path = self.cache_path(country_code, year);
+        cache_path.exists()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -340,5 +386,19 @@ mod tests {
         let parsed: Holiday = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.name, "Christmas");
         assert_eq!(parsed.date, "2026-12-25");
+    }
+
+    #[test]
+    fn test_local_provider_has_cache_for_missing_country() {
+        let provider = LocalFileProvider::new();
+        assert!(!provider.has_cache("XX", 2026), "XX should not exist");
+    }
+
+    #[test]
+    fn test_local_provider_refresh_same_as_load() {
+        let provider = LocalFileProvider::new();
+        let load_result = provider.load("US", 2026).unwrap();
+        let refresh_result = provider.refresh("US", 2026).unwrap();
+        assert_eq!(load_result, refresh_result, "LocalFileProvider refresh should match load");
     }
 }
